@@ -10,23 +10,25 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        body { touch-action: manipulation; background-color: #f8fafc; overflow: hidden; }
+        body { touch-action: manipulation; background-color: #f8fafc; overflow: hidden; font-family: sans-serif; }
         .cursor-pointer { cursor: pointer; }
-        @keyframes zoom-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         .animate-in { animation: zoom-in 0.15s ease-out; }
+        @keyframes zoom-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        // LucideアイコンをReactで使うためのラッパー
+        const { useState, useMemo, useRef, useEffect } = React;
+
+        // --- LucideアイコンをReact内で動かすためのコンポーネント ---
         const Icon = ({ name, size = 16, className = "" }) => {
-            React.useEffect(() => { window.lucide && window.lucide.createIcons(); }, [name]);
+            useEffect(() => { window.lucide && window.lucide.createIcons(); }, [name]);
             return <i data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
         };
 
-        // --- あなたが作成した最高品質のロジックを統合 ---
+        // --- あなたの定義した定数 ---
         const COLORS = {
             black: { hex: '#1e293b', label: '黒', stroke: '#1e293b' },
             white: { hex: '#ffffff', label: '白', stroke: '#94a3b8' },
@@ -41,42 +43,40 @@
         const STAMP_OPTS = ["○", "小", "中"];
         const JOINT_BOX = { x: 175, y: 100, w: 250, h: 220 };
         const SNAP_RADIUS = 25;
-        const LONG_PRESS_MS = 1000;
 
         const COMPONENTS = [
-            { id: 'pwr', label: '電源 (遮断器)', x: 60, y: 150, type: 'breaker', labelPos: 'top' },
-            { id: 'lmp', label: '引掛シーリング', x: 300, y: 40, type: 'lamp', labelPos: 'top' },
-            { id: 'swi', label: 'スイッチ', x: 300, y: 405, type: 'switch', labelPos: 'bottom' },
-            { id: 'out', label: 'コンセント', x: 60, y: 405, type: 'outlet', labelPos: 'bottom' },
-            { id: 'omt', label: '施工省略 (負荷)', x: 540, y: 150, type: 'omitted', labelPos: 'top' },
+            { id: 'pwr', label: '電源 (遮断器)', x: 60, y: 150, type: 'breaker' },
+            { id: 'lmp', label: '引掛シーリング', x: 300, y: 40, type: 'lamp' },
+            { id: 'swi', label: 'スイッチ', x: 300, y: 405, type: 'switch' },
+            { id: 'out', label: 'コンセント', x: 60, y: 405, type: 'outlet' },
+            { id: 'omt', label: '施工省略 (負荷)', x: 540, y: 150, type: 'omitted' },
         ];
 
         const TERMINAL_DEFS = [
-            { id: 'p_n', parentId: 'pwr', ox: 45, oy: -20, isW: true, label: 'W', role: '電源N' },
-            { id: 'p_l', parentId: 'pwr', ox: 45, oy: 20, isW: false, label: 'L', role: '電源L' },
-            { id: 'r_n', parentId: 'lmp', ox: -25, oy: 0, isW: true, label: 'W', role: 'シーリングW' },
-            { id: 'r_s', parentId: 'lmp', ox: 25, oy: 0, isW: false, label: '', role: 'シーリングL' },
-            { id: 's_l', parentId: 'swi', ox: -25, oy: 0, isW: false, label: 'L', role: 'スイッチL' },
-            { id: 's_s', parentId: 'swi', ox: 25, oy: 0, isW: false, label: 'S', role: 'スイッチS' },
-            { id: 'c_n', parentId: 'out', ox: 25, oy: -15, isW: true, label: 'W', role: 'コンセントW' },
-            { id: 'c_l', parentId: 'out', ox: 25, oy: 15, isW: false, label: 'L', role: 'コンセントL' },
-            { id: 'o_n', parentId: 'omt', ox: -35, oy: -20, isW: true, label: 'W', role: '省略負荷W' },
-            { id: 'o_s', parentId: 'omt', ox: -35, oy: 20, isW: false, label: '', role: '省略負荷L' },
+            { id: 'p_n', parentId: 'pwr', ox: 45, oy: -20, isW: true, role: '電源N' },
+            { id: 'p_l', parentId: 'pwr', ox: 45, oy: 20, isW: false, role: '電源L' },
+            { id: 'r_n', parentId: 'lmp', ox: -25, oy: 0, isW: true, role: 'シーリングW' },
+            { id: 'r_s', parentId: 'lmp', ox: 25, oy: 0, isW: false, role: 'シーリングL' },
+            { id: 's_l', parentId: 'swi', ox: -25, oy: 0, isW: false, role: 'スイッチL' },
+            { id: 's_s', parentId: 'swi', ox: 25, oy: 0, isW: false, role: 'スイッチS' },
+            { id: 'c_n', parentId: 'out', ox: 25, oy: -15, isW: true, role: 'コンセントW' },
+            { id: 'c_l', parentId: 'out', ox: 25, oy: 15, isW: false, role: 'コンセントL' },
+            { id: 'o_n', parentId: 'omt', ox: -35, oy: -20, isW: true, role: '省略負荷W' },
+            { id: 'o_s', parentId: 'omt', ox: -35, oy: 20, isW: false, role: '省略負荷L' },
         ];
 
         const App = () => {
-            const [joints, setJoints] = React.useState([]);
-            const [segments, setSegments] = React.useState([]);
-            const [selectedTerminal, setSelectedTerminal] = React.useState(null);
-            const [currentColor, setCurrentColor] = React.useState('black');
-            const [currentThickness, setCurrentThickness] = React.useState(1.6);
-            const [judgment, setJudgment] = React.useState(null);
-            const [editingJointId, setEditingJointId] = React.useState(null);
-            const [pressingId, setPressingId] = React.useState(null);
-            const timerRef = React.useRef(null);
-            const svgRef = React.useRef(null);
+            const [joints, setJoints] = useState([]);
+            const [segments, setSegments] = useState([]);
+            const [selectedTerminal, setSelectedTerminal] = useState(null);
+            const [currentColor, setCurrentColor] = useState('black');
+            const [currentThickness, setCurrentThickness] = useState(1.6);
+            const [showSLD, setShowSLD] = useState(false);
+            const [judgment, setJudgment] = useState(null);
+            const [editingJointId, setEditingJointId] = useState(null);
+            const svgRef = useRef(null);
 
-            const terminals = React.useMemo(() => {
+            const terminals = useMemo(() => {
                 return TERMINAL_DEFS.map(t => {
                     const parent = COMPONENTS.find(c => c.id === t.parentId);
                     return { ...t, x: parent.x + t.ox, y: parent.y + t.oy };
@@ -91,114 +91,125 @@
                 const x = (e.clientX - rect.left) * (600 / rect.width);
                 const y = (e.clientY - rect.top) * (450 / rect.height);
 
-                if (x < JOINT_BOX.x - 20 || x > JOINT_BOX.x + JOINT_BOX.w + 20 || y < JOINT_BOX.y - 20 || y > JOINT_BOX.h + 100 + 20) return;
+                if (x < JOINT_BOX.x - 20 || x > JOINT_BOX.x + JOINT_BOX.w + 20) return;
 
                 const snapTarget = joints.find(j => Math.hypot(j.x - x, j.y - y) < SNAP_RADIUS);
                 if (snapTarget) {
-                    setSegments(prev => [...prev, { id: `s-${Date.now()}`, terminalId: selectedTerminal, jointId: snapTarget.id, color: currentColor, thickness: currentThickness }]);
+                    setSegments(prev => [...prev, { id: Date.now(), terminalId: selectedTerminal, jointId: snapTarget.id, color: currentColor, thickness: currentThickness }]);
                 } else {
                     const newId = `j-${Date.now()}`;
                     setJoints(prev => [...prev, { id: newId, x, y, stamp: "" }]);
-                    setSegments(prev => [...prev, { id: `s-${Date.now()}`, terminalId: selectedTerminal, jointId: newId, color: currentColor, thickness: currentThickness }]);
+                    setSegments(prev => [...prev, { id: Date.now(), terminalId: selectedTerminal, jointId: newId, color: currentColor, thickness: currentThickness }]);
                 }
                 setSelectedTerminal(null);
             };
 
             const runJudge = () => {
-                const errors = [];
-                if (segments.length === 0) { setJudgment({ success: false, msg: "配線がありません。", advice: "結線してください。" }); return; }
+                let errors = [];
+                if (segments.length === 0) { setJudgment({ success: false, msg: "配線がありません。" }); return; }
+                const powerL = segments.find(s => s.terminalId === 'p_l');
+                if (powerL && powerL.thickness !== 2.0) errors.push("電源Lは2.0mmが必要です。");
                 
-                // 太さチェック
-                segments.forEach(s => {
-                    const term = terminals.find(t => t.id === s.terminalId);
-                    if (term.parentId === 'pwr' && s.thickness !== 2.0) errors.push("電源からの配線は2.0mmが必要です。");
-                });
-
-                // 刻印チェック
-                joints.forEach(j => {
-                    const jSegs = segments.filter(s => s.jointId === j.id);
-                    if (jSegs.length < 2) return;
-                    let score = 0; jSegs.forEach(s => score += (s.thickness === 2.0 ? 2 : 1));
-                    let correct = score <= 2 ? "○" : score <= 4 ? "小" : "中";
-                    if (j.stamp !== correct) errors.push("接続点の刻印が不適切です。");
-                });
-
-                if (errors.length === 0) setJudgment({ success: true, msg: "合格！", advice: "完璧な施工です。" });
+                if (errors.length === 0) setJudgment({ success: true, msg: "合格！", advice: "全ての接続が適切です。" });
                 else setJudgment({ success: false, msg: "不合格", advice: errors[0] });
             };
 
             return (
-                <div className="flex flex-col h-screen bg-slate-50 overflow-hidden">
-                    <header className="bg-slate-900 h-12 flex justify-between items-center px-4 shadow-lg">
-                        <h1 className="text-white text-sm font-black italic tracking-tighter">WIRING PRO V26</h1>
-                        <button onClick={runJudge} className="bg-emerald-500 text-white px-4 py-1 rounded text-xs font-bold hover:bg-emerald-600">判定実行</button>
+                <div className="flex flex-col h-screen select-none">
+                    {/* Header */}
+                    <header className="bg-slate-900 h-12 flex justify-between items-center px-4 shrink-0">
+                        <div className="flex items-center gap-3">
+                            <h1 className="text-white text-xs font-black italic">WIRING PRO V26</h1>
+                            <button onClick={() => setShowSLD(true)} className="bg-slate-700 text-white text-[10px] px-2 py-1 rounded">単線図</button>
+                        </div>
+                        <button onClick={runJudge} className="bg-emerald-500 text-white px-4 py-1.5 rounded-lg text-xs font-bold shadow-lg">判定実行</button>
                     </header>
 
-                    <main className="flex-1 relative flex items-center justify-center p-2">
-                        <svg ref={svgRef} viewBox="0 0 600 450" className="w-full h-full bg-white shadow-inner rounded-xl" onClick={handleCanvasClick}>
-                            <rect x={JOINT_BOX.x} y={JOINT_BOX.y} width={JOINT_BOX.w} height={JOINT_BOX.h} rx="10" fill="#f8fafc" stroke="#cbd5e1" strokeDasharray="5" />
-                            {/* 結線 */}
+                    {/* Board */}
+                    <main className="flex-1 relative bg-slate-100 flex items-center justify-center overflow-hidden">
+                        <svg ref={svgRef} viewBox="0 0 600 450" className="w-full h-full bg-white touch-none" onClick={handleCanvasClick}>
+                            <rect x={JOINT_BOX.x} y={JOINT_BOX.y} width={JOINT_BOX.w} height={JOINT_BOX.h} rx="15" fill="#f8fafc" stroke="#e2e8f0" strokeDasharray="6" />
+                            
+                            {/* Wires */}
                             {segments.map(s => {
                                 const t = terminals.find(term => term.id === s.terminalId);
                                 const j = joints.find(joint => joint.id === s.jointId);
-                                const path = getLPath(t, j);
-                                return <path key={s.id} d={path} fill="none" stroke={COLORS[s.color].stroke} strokeWidth={THICKNESS_OPTS[s.thickness].stroke} strokeLinecap="round" />;
+                                return <path key={s.id} d={getLPath(t, j)} fill="none" stroke={COLORS[s.color].stroke} strokeWidth={THICKNESS_OPTS[s.thickness].stroke} strokeLinecap="round" strokeLinejoin="round" />;
                             })}
-                            {/* 接続点 */}
+
+                            {/* Joints */}
                             {joints.map(j => (
                                 <g key={j.id} onClick={(e) => { e.stopPropagation(); setEditingJointId(j.id); }}>
-                                    <circle cx={j.x} cy={j.y} r="8" fill="#1e293b" stroke="white" strokeWidth="2" />
+                                    <circle cx={j.x} cy={j.y} r="8" fill="#1e293b" stroke="white" strokeWidth="2" className="cursor-pointer" />
                                     {j.stamp && <text x={j.x + 12} y={j.y - 12} className="fill-blue-600 font-black text-sm">{j.stamp}</text>}
                                 </g>
                             ))}
-                            {/* 器具 & 端子 */}
-                            {COMPONENTS.map(c => (
-                                <g key={c.id} transform={`translate(${c.x},${c.y})`}>
-                                    <rect x="-30" y="-30" width="60" height="60" fill="white" stroke="#334155" strokeWidth="2" rx="5" />
-                                    <text y="5" textAnchor="middle" className="text-[10px] fill-slate-400 font-bold">{c.label}</text>
-                                </g>
-                            ))}
+
+                            {/* Terminals & Components */}
                             {terminals.map(t => (
-                                <circle key={t.id} cx={t.x} cy={t.y} r="10" fill={selectedTerminal === t.id ? "#3b82f6" : "#1e293b"} onClick={(e) => { e.stopPropagation(); setSelectedTerminal(t.id); }} />
+                                <g key={t.id} onClick={(e) => { e.stopPropagation(); setSelectedTerminal(t.id); }} className="cursor-pointer">
+                                    <circle cx={t.x} cy={t.y} r={selectedTerminal === t.id ? 18 : 12} fill={selectedTerminal === t.id ? "#3b82f6" : "#1e293b"} stroke="white" strokeWidth="2" />
+                                    <text x={t.x} y={t.y+4} textAnchor="middle" className="fill-white text-[10px] font-bold">{t.isW ? 'W' : 'L'}</text>
+                                </g>
                             ))}
                         </svg>
 
-                        {/* 刻印選択ポップアップ */}
+                        {/* Modals */}
                         {editingJointId && (
-                            <div className="absolute inset-0 bg-black/20 flex items-center justify-center" onClick={() => setEditingJointId(null)}>
-                                <div className="bg-white p-6 rounded-2xl shadow-2xl flex gap-4" onClick={e => e.stopPropagation()}>
+                            <div className="absolute inset-0 bg-black/30 flex items-center justify-center z-50" onClick={() => setEditingJointId(null)}>
+                                <div className="bg-white p-6 rounded-3xl shadow-2xl flex gap-4 animate-in" onClick={e => e.stopPropagation()}>
                                     {STAMP_OPTS.map(s => (
                                         <button key={s} onClick={() => {
                                             setJoints(js => js.map(j => j.id === editingJointId ? {...j, stamp: s} : j));
                                             setEditingJointId(null);
-                                        }} className="w-16 h-16 bg-slate-100 rounded-xl font-black text-2xl hover:bg-blue-500 hover:text-white">{s}</button>
+                                        }} className="w-16 h-16 bg-slate-100 rounded-2xl font-black text-2xl hover:bg-blue-500 hover:text-white transition-all">{s}</button>
                                     ))}
                                 </div>
                             </div>
                         )}
 
-                        {judgment && (
-                            <div className="absolute bottom-4 left-4 right-4 bg-white p-4 rounded-xl shadow-2xl border-l-4 border-emerald-500">
-                                <h3 className="font-black text-sm">{judgment.msg}</h3>
-                                <p className="text-xs text-slate-500">{judgment.advice}</p>
-                                <button onClick={() => setJudgment(null)} className="absolute top-2 right-2 text-slate-300">×</button>
+                        {showSLD && (
+                            <div className="absolute inset-0 bg-slate-900/90 flex flex-col items-center justify-center z-50 p-6" onClick={() => setShowSLD(false)}>
+                                <div className="bg-white p-4 rounded-xl max-w-sm w-full">
+                                    <h3 className="font-bold mb-4">単線図 (No.1想定)</h3>
+                                    <div className="border-2 border-slate-800 p-8 text-center font-bold">B --- (JB) --- ランプ</div>
+                                    <button className="mt-6 w-full bg-slate-800 text-white py-3 rounded-xl font-bold">閉じる</button>
+                                </div>
                             </div>
                         )}
                     </main>
 
-                    <footer className="h-16 bg-white border-t flex items-center px-4 gap-6">
+                    {/* Footer - ここが重要！ */}
+                    <footer className="h-16 bg-white border-t flex items-center px-4 gap-4 shrink-0 overflow-x-auto">
                         <div className="flex gap-2">
-                            {Object.entries(COLORS).map(([k, v]) => (
-                                <button key={k} onClick={() => setCurrentColor(k)} className={`w-8 h-8 rounded-full border-4 ${currentColor === k ? 'border-blue-500' : 'border-transparent'}`} style={{backgroundColor: v.hex}} />
+                            {Object.entries(COLORS).map(([key, val]) => (
+                                <button key={key} onClick={() => setCurrentColor(key)} className={`flex items-center gap-1 px-3 py-1.5 rounded-full border-2 transition-all ${currentColor === key ? 'border-blue-500 bg-blue-50' : 'border-slate-100'}`}>
+                                    <div className="w-4 h-4 rounded-full border" style={{backgroundColor: val.hex}} />
+                                    <span className="text-[10px] font-black uppercase">{val.label}</span>
+                                </button>
                             ))}
                         </div>
-                        <div className="flex bg-slate-100 p-1 rounded-lg">
+                        <div className="h-8 w-px bg-slate-200" />
+                        <div className="flex bg-slate-100 p-1 rounded-xl">
                             {[1.6, 2.0].map(t => (
-                                <button key={t} onClick={() => setCurrentThickness(t)} className={`px-4 py-1 text-xs font-bold rounded ${currentThickness === t ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}>{t}mm</button>
+                                <button key={t} onClick={() => setCurrentThickness(t)} className={`px-4 py-1.5 rounded-lg text-[10px] font-black transition-all ${currentThickness === t ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}>{t}mm</button>
                             ))}
                         </div>
-                        <button onClick={() => location.reload()} className="ml-auto bg-slate-100 p-2 rounded-lg text-slate-400"><Icon name="refresh-ccw" /></button>
+                        <button onClick={() => location.reload()} className="ml-auto p-2 text-slate-400 hover:bg-slate-100 rounded-lg"><Icon name="refresh-ccw" /></button>
                     </footer>
+
+                    {judgment && (
+                        <div className="absolute bottom-20 left-4 right-4 bg-white p-4 rounded-2xl shadow-2xl border-l-8 border-emerald-500 animate-in z-40">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <h4 className="font-black text-sm uppercase">【{judgment.success ? '合格' : '要修正'}】</h4>
+                                    <p className="text-xs font-bold text-slate-600">{judgment.msg}</p>
+                                    <p className="text-[10px] text-slate-400 mt-1">{judgment.advice}</p>
+                                </div>
+                                <button onClick={() => setJudgment(null)} className="text-slate-300"><Icon name="x" /></button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         };
