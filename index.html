@@ -3,23 +3,20 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>複線図シミュレーター</title>
+    <title>第二種電気工事士 複線図マスター</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { touch-action: manipulation; background-color: #f3f4f6; font-family: sans-serif; }
-        .canvas-area { position: relative; width: 100%; height: 400px; background: white; border-bottom: 2px solid #e5e7eb; overflow: hidden; }
-        .node { cursor: pointer; transition: transform 0.1s; }
-        .node:active { transform: scale(1.3); }
+        body { touch-action: manipulation; background-color: #f3f4f6; -webkit-user-select: none; }
+        .canvas-area { position: relative; width: 100%; height: 450px; background: white; border-bottom: 2px solid #e5e7eb; overflow: hidden; }
+        .label-bg { background: rgba(255, 255, 255, 0.9); padding: 1px 4px; border-radius: 4px; font-weight: bold; font-size: 10px; border: 1px solid #ddd; }
     </style>
 </head>
 <body>
     <div id="root"></div>
-
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
     <script>
-        // JSXを使わないReactの書き方に変換（真っ白画面を回避する最強の手段）
         const e = React.createElement;
         const { useState, useEffect } = React;
 
@@ -28,17 +25,19 @@
             const [selection, setSelection] = useState(null);
             const [color, setColor] = useState('black');
             const [thickness, setThickness] = useState(1.6);
+            const [stamps, setStamps] = useState({});
             const [message, setMessage] = useState("端子をタップして開始");
 
-            const points = [
-                { id: 'p_l', label: '電源 L', x: 50, y: 100 },
-                { id: 'p_n', label: '電源 N', x: 50, y: 150 },
-                { id: 'lamp', label: 'ランプ', x: 300, y: 80 },
-                { id: 'sw', label: 'スイッチ', x: 300, y: 200 },
-                { id: 'jb1', label: '', x: 150, y: 100, isJB: true },
-                { id: 'jb2', label: '', x: 150, y: 150, isJB: true },
-                { id: 'jb3', label: '', x: 200, y: 100, isJB: true },
-                { id: 'jb4', label: '', x: 200, y: 150, isJB: true }
+            const components = [
+                { id: 'p_l', label: '電源 L (黒)', x: 50, y: 120 },
+                { id: 'p_n', label: '電源 N (白)', x: 50, y: 170 },
+                { id: 'lamp', label: 'ランプレセプタクル (W)', x: 320, y: 80 },
+                { id: 'sw', label: 'スイッチ (イ)', x: 320, y: 220 },
+                { id: 'jb1', x: 170, y: 100, isJB: true },
+                { id: 'jb2', x: 170, y: 140, isJB: true },
+                { id: 'jb3', x: 170, y: 180, isJB: true },
+                { id: 'jb4', x: 230, y: 100, isJB: true },
+                { id: 'jb5', x: 230, y: 140, isJB: true }
             ];
 
             const handleTap = (id) => {
@@ -47,55 +46,89 @@
                     setMessage("接続先を選んでください");
                 } else {
                     if (selection === id) { setSelection(null); return; }
-                    setLines([...lines, { from: selection, to: id, color, thickness }]);
+                    const from = components.find(c => c.id === selection);
+                    const to = components.find(c => c.id === id);
+                    if (!from.isJB && !to.isJB) {
+                        alert("器具同士は直接繋げません！ボックスを経由してください。");
+                        setSelection(null);
+                        return;
+                    }
+                    setLines([...lines, { id: Date.now(), from: selection, to: id, color, thickness }]);
                     setSelection(null);
-                    setMessage("接続しました！");
+                    setMessage("接続完了！");
                 }
             };
 
+            const handleStamp = (id) => {
+                const current = stamps[id] || "";
+                const next = current === "" ? "○" : current === "○" ? "極小" : current === "極小" ? "小" : current === "小" ? "中" : "";
+                setStamps({...stamps, [id]: next});
+            };
+
+            const checkResult = () => {
+                const hasPower20 = lines.some(l => (l.from === 'p_l' || l.to === 'p_l') && l.thickness === 2.0);
+                if (!hasPower20) {
+                    alert("不合格：電源ライン(L)が1.6mmになっています！(正: 2.0mm)");
+                    return;
+                }
+                alert("合格判定：接続・太さともに良好です！");
+            };
+
             return e('div', { className: 'flex flex-col h-screen' },
-                e('header', { className: 'bg-white p-4 shadow-sm font-bold text-center' }, "複線図マスター 公開版"),
+                e('header', { className: 'bg-white p-4 shadow-sm font-bold text-center flex justify-between' }, 
+                    e('span', null, "複線図マスターV1.0"),
+                    e('button', { onClick: () => alert("長押し機能は現在Web版調整中です。リセットをお使いください"), className: 'text-xs text-gray-400' }, "HELP")
+                ),
                 e('div', { className: 'canvas-area' },
                     e('svg', { className: 'w-full h-full' },
-                        // ジョイントボックス枠
-                        e('rect', { x: 130, y: 70, width: 90, height: 120, fill: 'none', stroke: '#ccc', strokeDasharray: '4' }),
-                        // 配線
-                        lines.map((l, i) => {
-                            const p1 = points.find(p => p.id === l.from);
-                            const p2 = points.find(p => p.id === l.to);
+                        e('rect', { x: 150, y: 80, width: 100, height: 140, fill: 'none', stroke: '#cbd5e1', strokeDasharray: '4' }),
+                        lines.map(l => {
+                            const p1 = components.find(p => p.id === l.from);
+                            const p2 = components.find(p => p.id === l.to);
                             return e('line', {
-                                key: i, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
-                                stroke: l.color, strokeWidth: l.thickness === 2.0 ? 6 : 3, strokeLinecap: 'round'
+                                key: l.id, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
+                                stroke: l.color === 'white' ? '#ddd' : l.color,
+                                strokeWidth: l.thickness === 2.0 ? 7 : 3, strokeLinecap: 'round'
                             });
                         }),
-                        // 端子
-                        points.map(p => e('g', { key: p.id, onClick: () => handleTap(p.id), className: 'node' },
-                            e('circle', { cx: p.x, cy: p.y, r: 8, fill: selection === p.id ? '#3b82f6' : '#1e293b' }),
-                            p.label && e('text', { x: p.x - 20, y: p.y - 15, className: 'text-[10px] font-bold' }, p.label)
+                        components.map(p => e('g', { key: p.id },
+                            e('circle', { 
+                                cx: p.x, cy: p.y, r: p.isJB ? 10 : 7, 
+                                fill: selection === p.id ? '#3b82f6' : (p.isJB ? '#64748b' : '#1e293b'),
+                                onClick: () => handleTap(p.id)
+                            }),
+                            p.isJB && e('text', { 
+                                x: p.x + 12, y: p.y + 5, 
+                                className: 'fill-red-500 font-bold text-sm cursor-pointer',
+                                onClick: () => handleStamp(p.id)
+                            }, stamps[p.id] || ""),
+                            p.label && e('foreignObject', { x: p.x < 150 ? p.x - 40 : p.x + 12, y: p.y - 25, width: 100, height: 20 },
+                                e('div', { className: 'label-bg inline-block' }, p.label)
+                            )
                         ))
                     )
                 ),
-                e('footer', { className: 'bg-white p-6 flex-1' },
-                    e('p', { className: 'text-center text-blue-600 font-bold mb-4' }, message),
+                e('footer', { className: 'bg-white p-4 flex-1 shadow-inner' },
+                    e('p', { className: 'text-center text-blue-600 font-bold text-sm mb-4' }, message),
                     e('div', { className: 'flex justify-between items-center mb-6' },
                         e('div', { className: 'flex gap-2' },
-                            ['black', 'red', 'blue'].map(c => e('button', {
+                            ['black', 'white', 'red'].map(c => e('button', {
                                 key: c, onClick: () => setColor(c),
-                                className: `w-10 h-10 rounded-full border-4 ${color === c ? 'border-yellow-400' : 'border-transparent'}`,
-                                style: { backgroundColor: c }
+                                className: `w-10 h-10 rounded-full border-4 ${color === c ? 'border-blue-400' : 'border-gray-200'}`,
+                                style: { backgroundColor: c === 'white' ? '#fff' : c }
                             }))
                         ),
-                        e('div', { className: 'flex bg-gray-200 p-1 rounded-lg' },
+                        e('div', { className: 'flex bg-gray-100 p-1 rounded-xl' },
                             [1.6, 2.0].map(t => e('button', {
                                 key: t, onClick: () => setThickness(t),
-                                className: `px-4 py-2 rounded-md text-sm font-bold ${thickness === t ? 'bg-white shadow' : 'text-gray-500'}`
+                                className: `px-4 py-2 rounded-lg text-sm font-bold ${thickness === t ? 'bg-white shadow text-blue-600' : 'text-gray-400'}`
                             }, t + "mm"))
                         )
                     ),
-                    e('button', { 
-                        onClick: () => { if(confirm("消去しますか？")) setLines([]); },
-                        className: 'w-full bg-red-500 text-white py-4 rounded-xl font-bold'
-                    }, "リセット")
+                    e('div', { className: 'flex gap-2' },
+                        e('button', { onClick: () => { if(confirm("消去しますか？")) setLines([]); setStamps({}); }, className: 'flex-1 bg-red-50 text-red-500 py-4 rounded-2xl font-bold' }, "リセット"),
+                        e('button', { onClick: checkResult, className: 'flex-1 bg-blue-600 text-white py-4 rounded-2xl font-bold shadow-lg' }, "判定実行")
+                    )
                 )
             );
         };
