@@ -3,174 +3,208 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>第二種電気工事士 複線図練習アプリ 完全版</title>
+    <title>Wiring Pro V26 - 複線図練習アプリ</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        body { touch-action: manipulation; background-color: #f8fafc; font-family: sans-serif; -webkit-user-select: none; }
-        .canvas-area { position: relative; width: 100%; height: 480px; background: white; border-bottom: 2px solid #e2e8f0; overflow: hidden; }
-        .label-text { font-size: 11px; font-weight: bold; fill: #1e293b; }
-        .label-bg { fill: rgba(255, 255, 255, 0.85); stroke: #e2e8f0; stroke-width: 0.5; }
-        .stamp-text { font-size: 14px; font-weight: 900; fill: #ef4444; cursor: pointer; }
+        body { touch-action: manipulation; background-color: #f8fafc; overflow: hidden; }
+        .cursor-pointer { cursor: pointer; }
+        @keyframes zoom-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .animate-in { animation: zoom-in 0.15s ease-out; }
     </style>
 </head>
 <body>
     <div id="root"></div>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
-    <script>
-        const e = React.createElement;
-        const { useState, useEffect } = React;
+    <script type="text/babel">
+        // LucideアイコンをReactで使うためのラッパー
+        const Icon = ({ name, size = 16, className = "" }) => {
+            React.useEffect(() => { window.lucide && window.lucide.createIcons(); }, [name]);
+            return <i data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
+        };
+
+        // --- あなたが作成した最高品質のロジックを統合 ---
+        const COLORS = {
+            black: { hex: '#1e293b', label: '黒', stroke: '#1e293b' },
+            white: { hex: '#ffffff', label: '白', stroke: '#94a3b8' },
+            red: { hex: '#ef4444', label: '赤', stroke: '#ef4444' }
+        };
+
+        const THICKNESS_OPTS = {
+            1.6: { stroke: 5, label: '1.6', score: 1 },
+            2.0: { stroke: 9, label: '2.0', score: 2 }
+        };
+
+        const STAMP_OPTS = ["○", "小", "中"];
+        const JOINT_BOX = { x: 175, y: 100, w: 250, h: 220 };
+        const SNAP_RADIUS = 25;
+        const LONG_PRESS_MS = 1000;
+
+        const COMPONENTS = [
+            { id: 'pwr', label: '電源 (遮断器)', x: 60, y: 150, type: 'breaker', labelPos: 'top' },
+            { id: 'lmp', label: '引掛シーリング', x: 300, y: 40, type: 'lamp', labelPos: 'top' },
+            { id: 'swi', label: 'スイッチ', x: 300, y: 405, type: 'switch', labelPos: 'bottom' },
+            { id: 'out', label: 'コンセント', x: 60, y: 405, type: 'outlet', labelPos: 'bottom' },
+            { id: 'omt', label: '施工省略 (負荷)', x: 540, y: 150, type: 'omitted', labelPos: 'top' },
+        ];
+
+        const TERMINAL_DEFS = [
+            { id: 'p_n', parentId: 'pwr', ox: 45, oy: -20, isW: true, label: 'W', role: '電源N' },
+            { id: 'p_l', parentId: 'pwr', ox: 45, oy: 20, isW: false, label: 'L', role: '電源L' },
+            { id: 'r_n', parentId: 'lmp', ox: -25, oy: 0, isW: true, label: 'W', role: 'シーリングW' },
+            { id: 'r_s', parentId: 'lmp', ox: 25, oy: 0, isW: false, label: '', role: 'シーリングL' },
+            { id: 's_l', parentId: 'swi', ox: -25, oy: 0, isW: false, label: 'L', role: 'スイッチL' },
+            { id: 's_s', parentId: 'swi', ox: 25, oy: 0, isW: false, label: 'S', role: 'スイッチS' },
+            { id: 'c_n', parentId: 'out', ox: 25, oy: -15, isW: true, label: 'W', role: 'コンセントW' },
+            { id: 'c_l', parentId: 'out', ox: 25, oy: 15, isW: false, label: 'L', role: 'コンセントL' },
+            { id: 'o_n', parentId: 'omt', ox: -35, oy: -20, isW: true, label: 'W', role: '省略負荷W' },
+            { id: 'o_s', parentId: 'omt', ox: -35, oy: 20, isW: false, label: '', role: '省略負荷L' },
+        ];
 
         const App = () => {
-            const [lines, setLines] = useState([]);
-            const [selection, setSelection] = useState(null);
-            const [color, setColor] = useState('black');
-            const [thickness, setThickness] = useState(1.6);
-            const [stamps, setStamps] = useState({});
-            const [message, setMessage] = useState("端子をタップして結線を始めてください");
+            const [joints, setJoints] = React.useState([]);
+            const [segments, setSegments] = React.useState([]);
+            const [selectedTerminal, setSelectedTerminal] = React.useState(null);
+            const [currentColor, setCurrentColor] = React.useState('black');
+            const [currentThickness, setCurrentThickness] = React.useState(1.6);
+            const [judgment, setJudgment] = React.useState(null);
+            const [editingJointId, setEditingJointId] = React.useState(null);
+            const [pressingId, setPressingId] = React.useState(null);
+            const timerRef = React.useRef(null);
+            const svgRef = React.useRef(null);
 
-            // 候補問題 No.1 の器具配置
-            const components = [
-                { id: 'p_l', label: '電源 L (黒)', x: 40, y: 120, type: 'power' },
-                { id: 'p_n', label: '電源 N (白/W)', x: 40, y: 180, type: 'power' },
-                { id: 'lamp', label: 'ランプレセプタクル (W)', x: 330, y: 80, type: 'load' },
-                { id: 'sw', label: 'スイッチ (イ)', x: 330, y: 240, type: 'switch' },
-                // ジョイントボックス内の接続点（5点）
-                { id: 'jb1', x: 170, y: 110, isJB: true },
-                { id: 'jb2', x: 170, y: 150, isJB: true },
-                { id: 'jb3', x: 170, y: 190, isJB: true },
-                { id: 'jb4', x: 230, y: 130, isJB: true },
-                { id: 'jb5', x: 230, y: 170, isJB: true }
-            ];
+            const terminals = React.useMemo(() => {
+                return TERMINAL_DEFS.map(t => {
+                    const parent = COMPONENTS.find(c => c.id === t.parentId);
+                    return { ...t, x: parent.x + t.ox, y: parent.y + t.oy };
+                });
+            }, []);
 
-            const handleTap = (id) => {
-                const target = components.find(c => c.id === id);
-                if (!selection) {
-                    setSelection(id);
-                    setMessage(`${target.label || '接続点'}を選択中... 次の点を選んでください`);
+            const getLPath = (t, j) => `M ${t.x} ${t.y} L ${j.x} ${t.y} L ${j.x} ${j.y}`;
+
+            const handleCanvasClick = (e) => {
+                if (editingJointId || !selectedTerminal) return;
+                const rect = svgRef.current.getBoundingClientRect();
+                const x = (e.clientX - rect.left) * (600 / rect.width);
+                const y = (e.clientY - rect.top) * (450 / rect.height);
+
+                if (x < JOINT_BOX.x - 20 || x > JOINT_BOX.x + JOINT_BOX.w + 20 || y < JOINT_BOX.y - 20 || y > JOINT_BOX.h + 100 + 20) return;
+
+                const snapTarget = joints.find(j => Math.hypot(j.x - x, j.y - y) < SNAP_RADIUS);
+                if (snapTarget) {
+                    setSegments(prev => [...prev, { id: `s-${Date.now()}`, terminalId: selectedTerminal, jointId: snapTarget.id, color: currentColor, thickness: currentThickness }]);
                 } else {
-                    if (selection === id) { setSelection(null); setMessage("選択を解除しました"); return; }
-                    const from = components.find(c => c.id === selection);
-                    const to = target;
-                    
-                    // 器具同士の直接接続をブロック
-                    if (!from.isJB && !to.isJB) {
-                        alert("⚠️ 不適切：器具同士を直接結線することはできません。ボックスを経由してください。");
-                        setSelection(null);
-                        return;
-                    }
-                    
-                    setLines([...lines, { id: Date.now(), from: selection, to: id, color, thickness }]);
-                    setSelection(null);
-                    setMessage("結線完了。次の配線か、接続点を叩いて刻印を選んでください。");
+                    const newId = `j-${Date.now()}`;
+                    setJoints(prev => [...prev, { id: newId, x, y, stamp: "" }]);
+                    setSegments(prev => [...prev, { id: `s-${Date.now()}`, terminalId: selectedTerminal, jointId: newId, color: currentColor, thickness: currentThickness }]);
                 }
+                setSelectedTerminal(null);
             };
 
-            const toggleStamp = (id) => {
-                const s = ["", "○", "極小", "小", "中"];
-                const currentIdx = s.indexOf(stamps[id] || "");
-                const next = s[(currentIdx + 1) % s.length];
-                setStamps({...stamps, [id]: next});
+            const runJudge = () => {
+                const errors = [];
+                if (segments.length === 0) { setJudgment({ success: false, msg: "配線がありません。", advice: "結線してください。" }); return; }
+                
+                // 太さチェック
+                segments.forEach(s => {
+                    const term = terminals.find(t => t.id === s.terminalId);
+                    if (term.parentId === 'pwr' && s.thickness !== 2.0) errors.push("電源からの配線は2.0mmが必要です。");
+                });
+
+                // 刻印チェック
+                joints.forEach(j => {
+                    const jSegs = segments.filter(s => s.jointId === j.id);
+                    if (jSegs.length < 2) return;
+                    let score = 0; jSegs.forEach(s => score += (s.thickness === 2.0 ? 2 : 1));
+                    let correct = score <= 2 ? "○" : score <= 4 ? "小" : "中";
+                    if (j.stamp !== correct) errors.push("接続点の刻印が不適切です。");
+                });
+
+                if (errors.length === 0) setJudgment({ success: true, msg: "合格！", advice: "完璧な施工です。" });
+                else setJudgment({ success: false, msg: "不合格", advice: errors[0] });
             };
 
-            const checkResult = () => {
-                // 1. 電源Lの太さチェック
-                const powerLLine = lines.find(l => (l.from === 'p_l' || l.to === 'p_l'));
-                if (!powerLLine || powerLLine.thickness !== 2.0) {
-                    alert("【不合格】電源Lラインの電線太さが不適切です（正：2.0mm）");
-                    return;
-                }
+            return (
+                <div className="flex flex-col h-screen bg-slate-50 overflow-hidden">
+                    <header className="bg-slate-900 h-12 flex justify-between items-center px-4 shadow-lg">
+                        <h1 className="text-white text-sm font-black italic tracking-tighter">WIRING PRO V26</h1>
+                        <button onClick={runJudge} className="bg-emerald-500 text-white px-4 py-1 rounded text-xs font-bold hover:bg-emerald-600">判定実行</button>
+                    </header>
 
-                // 2. 接地側(N)の白線チェック
-                const powerNLine = lines.find(l => (l.from === 'p_n' || l.to === 'p_n'));
-                if (powerNLine && powerNLine.color !== 'white') {
-                    alert("【不合格】接地側電線(N)の色が間違っています（正：白）");
-                    return;
-                }
+                    <main className="flex-1 relative flex items-center justify-center p-2">
+                        <svg ref={svgRef} viewBox="0 0 600 450" className="w-full h-full bg-white shadow-inner rounded-xl" onClick={handleCanvasClick}>
+                            <rect x={JOINT_BOX.x} y={JOINT_BOX.y} width={JOINT_BOX.w} height={JOINT_BOX.h} rx="10" fill="#f8fafc" stroke="#cbd5e1" strokeDasharray="5" />
+                            {/* 結線 */}
+                            {segments.map(s => {
+                                const t = terminals.find(term => term.id === s.terminalId);
+                                const j = joints.find(joint => joint.id === s.jointId);
+                                const path = getLPath(t, j);
+                                return <path key={s.id} d={path} fill="none" stroke={COLORS[s.color].stroke} strokeWidth={THICKNESS_OPTS[s.thickness].stroke} strokeLinecap="round" />;
+                            })}
+                            {/* 接続点 */}
+                            {joints.map(j => (
+                                <g key={j.id} onClick={(e) => { e.stopPropagation(); setEditingJointId(j.id); }}>
+                                    <circle cx={j.x} cy={j.y} r="8" fill="#1e293b" stroke="white" strokeWidth="2" />
+                                    {j.stamp && <text x={j.x + 12} y={j.y - 12} className="fill-blue-600 font-black text-sm">{j.stamp}</text>}
+                                </g>
+                            ))}
+                            {/* 器具 & 端子 */}
+                            {COMPONENTS.map(c => (
+                                <g key={c.id} transform={`translate(${c.x},${c.y})`}>
+                                    <rect x="-30" y="-30" width="60" height="60" fill="white" stroke="#334155" strokeWidth="2" rx="5" />
+                                    <text y="5" textAnchor="middle" className="text-[10px] fill-slate-400 font-bold">{c.label}</text>
+                                </g>
+                            ))}
+                            {terminals.map(t => (
+                                <circle key={t.id} cx={t.x} cy={t.y} r="10" fill={selectedTerminal === t.id ? "#3b82f6" : "#1e293b"} onClick={(e) => { e.stopPropagation(); setSelectedTerminal(t.id); }} />
+                            ))}
+                        </svg>
 
-                // 3. 刻印チェック (簡易ロジック)
-                alert("【合格判定】回路接続・電線色・太さの基本条件をクリアしています！刻印の適合も確認してください。");
-            };
+                        {/* 刻印選択ポップアップ */}
+                        {editingJointId && (
+                            <div className="absolute inset-0 bg-black/20 flex items-center justify-center" onClick={() => setEditingJointId(null)}>
+                                <div className="bg-white p-6 rounded-2xl shadow-2xl flex gap-4" onClick={e => e.stopPropagation()}>
+                                    {STAMP_OPTS.map(s => (
+                                        <button key={s} onClick={() => {
+                                            setJoints(js => js.map(j => j.id === editingJointId ? {...j, stamp: s} : j));
+                                            setEditingJointId(null);
+                                        }} className="w-16 h-16 bg-slate-100 rounded-xl font-black text-2xl hover:bg-blue-500 hover:text-white">{s}</button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
-            return e('div', { className: 'flex flex-col h-screen' },
-                e('header', { className: 'bg-slate-800 text-white p-4 shadow-md flex justify-between items-center' }, 
-                    e('h1', { className: 'font-bold' }, "複線図練習 No.1"),
-                    e('button', { onClick: () => alert("・2タップで結線\n・JB内の点をタップで刻印切替\n・リセットで全消去"), className: 'text-xs bg-slate-700 px-3 py-1 rounded' }, "操作方法")
-                ),
-                e('div', { className: 'canvas-area' },
-                    e('svg', { className: 'w-full h-full' },
-                        // ジョイントボックス
-                        e('rect', { x: 140, y: 80, width: 120, height: 140, fill: 'none', stroke: '#cbd5e1', strokeDasharray: '4', strokeWidth: '2' }),
-                        e('text', { x: 145, y: 75, className: 'fill-slate-400 text-[10px]' }, "ジョイントボックス"),
-                        
-                        // 配線描画
-                        lines.map(l => {
-                            const p1 = components.find(p => p.id === l.from);
-                            const p2 = components.find(p => p.id === l.to);
-                            return e('line', {
-                                key: l.id, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
-                                stroke: l.color === 'white' ? '#e2e8f0' : l.color,
-                                strokeWidth: l.thickness === 2.0 ? 8 : 4,
-                                strokeLinecap: 'round'
-                            });
-                        }),
-                        
-                        // 器具・端子描画
-                        components.map(p => e('g', { key: p.id },
-                            // テキスト背景ラベル
-                            p.label && e('rect', { x: p.x < 150 ? p.x - 5 : p.x + 15, y: p.y - 12, width: 90, height: 16, rx: 2, className: 'label-bg' }),
-                            p.label && e('text', { x: p.x < 150 ? p.x : p.x + 20, y: p.y, className: 'label-text' }, p.label),
-                            
-                            // 接続ドット
-                            e('circle', { 
-                                cx: p.x, cy: p.y, r: p.isJB ? 10 : 8, 
-                                className: 'cursor-pointer',
-                                fill: selection === p.id ? '#3b82f6' : (p.isJB ? '#94a3b8' : '#1e293b'),
-                                onClick: () => handleTap(p.id)
-                            }),
-                            
-                            // 刻印表示
-                            p.isJB && stamps[p.id] && e('text', { 
-                                x: p.x - 7, y: p.y + 25, className: 'stamp-text',
-                                onClick: () => toggleStamp(p.id)
-                            }, stamps[p.id])
-                        ))
-                    )
-                ),
-                e('footer', { className: 'bg-white p-5 flex-1 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]' },
-                    e('p', { className: 'text-center text-blue-600 font-bold text-sm mb-5 h-5' }, message),
-                    e('div', { className: 'flex justify-between items-center mb-6' },
-                        e('div', { className: 'flex gap-3' },
-                            ['black', 'white', 'red'].map(c => e('button', {
-                                key: c, onClick: () => setColor(c),
-                                className: `w-12 h-12 rounded-full border-4 transition-all ${color === c ? 'border-blue-500 scale-110 shadow-lg' : 'border-slate-100'}`,
-                                style: { backgroundColor: c === 'white' ? '#ffffff' : c, border: c === 'white' ? '2px solid #e2e8f0' : '' }
-                            }))
-                        ),
-                        e('div', { className: 'flex bg-slate-100 p-1.5 rounded-2xl' },
-                            [1.6, 2.0].map(t => e('button', {
-                                key: t, onClick: () => setThickness(t),
-                                className: `px-5 py-2.5 rounded-xl text-sm font-black transition-all ${thickness === t ? 'bg-white shadow-md text-blue-600' : 'text-slate-400'}`
-                            }, t + "mm"))
-                        )
-                    ),
-                    e('div', { className: 'flex gap-3' },
-                        e('button', { 
-                            onClick: () => { if(confirm("全消去しますか？")) { setLines([]); setStamps({}); } },
-                            className: 'flex-1 bg-slate-100 text-slate-500 py-4 rounded-2xl font-bold active:bg-slate-200'
-                        }, "リセット"),
-                        e('button', { 
-                            onClick: checkResult,
-                            className: 'flex-1 bg-blue-600 text-white py-4 rounded-2xl font-bold shadow-lg shadow-blue-200 active:scale-95 transition-transform'
-                        }, "判定実行")
-                    )
-                )
+                        {judgment && (
+                            <div className="absolute bottom-4 left-4 right-4 bg-white p-4 rounded-xl shadow-2xl border-l-4 border-emerald-500">
+                                <h3 className="font-black text-sm">{judgment.msg}</h3>
+                                <p className="text-xs text-slate-500">{judgment.advice}</p>
+                                <button onClick={() => setJudgment(null)} className="absolute top-2 right-2 text-slate-300">×</button>
+                            </div>
+                        )}
+                    </main>
+
+                    <footer className="h-16 bg-white border-t flex items-center px-4 gap-6">
+                        <div className="flex gap-2">
+                            {Object.entries(COLORS).map(([k, v]) => (
+                                <button key={k} onClick={() => setCurrentColor(k)} className={`w-8 h-8 rounded-full border-4 ${currentColor === k ? 'border-blue-500' : 'border-transparent'}`} style={{backgroundColor: v.hex}} />
+                            ))}
+                        </div>
+                        <div className="flex bg-slate-100 p-1 rounded-lg">
+                            {[1.6, 2.0].map(t => (
+                                <button key={t} onClick={() => setCurrentThickness(t)} className={`px-4 py-1 text-xs font-bold rounded ${currentThickness === t ? 'bg-white shadow text-blue-600' : 'text-slate-400'}`}>{t}mm</button>
+                            ))}
+                        </div>
+                        <button onClick={() => location.reload()} className="ml-auto bg-slate-100 p-2 rounded-lg text-slate-400"><Icon name="refresh-ccw" /></button>
+                    </footer>
+                </div>
             );
         };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(e(App));
+        root.render(<App />);
     </script>
 </body>
 </html>
