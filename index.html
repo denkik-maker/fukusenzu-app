@@ -3,188 +3,105 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>第二種電気工事士 複線図練習アプリ</title>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <title>複線図シミュレーター</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        body { touch-action: manipulation; background-color: #f3f4f6; -webkit-user-select: none; }
-        .canvas-container { position: relative; width: 100%; height: 450px; background: #ffffff; border: 2px solid #e5e7eb; overflow: hidden; }
-        .label-bg { background: rgba(255, 255, 255, 0.9); padding: 2px 4px; border-radius: 4px; border: 1px solid #ddd; }
-        .btn-active { transform: scale(0.95); opacity: 0.8; }
+        body { touch-action: manipulation; background-color: #f3f4f6; font-family: sans-serif; }
+        .canvas-area { position: relative; width: 100%; height: 400px; background: white; border-bottom: 2px solid #e5e7eb; overflow: hidden; }
+        .node { cursor: pointer; transition: transform 0.1s; }
+        .node:active { transform: scale(1.3); }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+    <script>
+        // JSXを使わないReactの書き方に変換（真っ白画面を回避する最強の手段）
+        const e = React.createElement;
+        const { useState, useEffect } = React;
 
         const App = () => {
             const [lines, setLines] = useState([]);
             const [selection, setSelection] = useState(null);
             const [color, setColor] = useState('black');
             const [thickness, setThickness] = useState(1.6);
-            const [showGuide, setShowGuide] = useState(false);
-            const [message, setMessage] = useState("端子をタップして結線を始めてください");
+            const [message, setMessage] = useState("端子をタップして開始");
 
-            // Lucideアイコンの初期化
-            useEffect(() => {
-                if (window.lucide) {
-                    window.lucide.createIcons();
-                }
-            }, [showGuide, lines]);
-
-            const components = [
-                { id: 'power_l', label: '電源 L (黒)', x: 50, y: 100, type: 'power', isJB: false },
-                { id: 'power_n', label: '電源 N (白)', x: 50, y: 150, type: 'power', isJB: false },
-                { id: 'lamp', label: 'ランプレセプタクル', x: 320, y: 80, type: 'load', isJB: false },
-                { id: 'switch', label: 'スイッチ', x: 320, y: 220, type: 'switch', isJB: false },
-                { id: 'jb_p1', label: '', x: 170, y: 100, isJB: true },
-                { id: 'jb_p2', label: '', x: 170, y: 130, isJB: true },
-                { id: 'jb_p3', label: '', x: 170, y: 160, isJB: true },
-                { id: 'jb_p4', label: '', x: 230, y: 100, isJB: true },
-                { id: 'jb_p5', label: '', x: 230, y: 130, isJB: true }
+            const points = [
+                { id: 'p_l', label: '電源 L', x: 50, y: 100 },
+                { id: 'p_n', label: '電源 N', x: 50, y: 150 },
+                { id: 'lamp', label: 'ランプ', x: 300, y: 80 },
+                { id: 'sw', label: 'スイッチ', x: 300, y: 200 },
+                { id: 'jb1', label: '', x: 150, y: 100, isJB: true },
+                { id: 'jb2', label: '', x: 150, y: 150, isJB: true },
+                { id: 'jb3', label: '', x: 200, y: 100, isJB: true },
+                { id: 'jb4', label: '', x: 200, y: 150, isJB: true }
             ];
 
-            const handlePointClick = (id) => {
+            const handleTap = (id) => {
                 if (!selection) {
                     setSelection(id);
-                    setMessage("接続先を選択してください");
+                    setMessage("接続先を選んでください");
                 } else {
-                    if (selection === id) {
-                        setSelection(null);
-                        setMessage("選択を解除しました");
-                        return;
-                    }
-                    const fromObj = components.find(c => c.id === selection);
-                    const toObj = components.find(c => c.id === id);
-                    
-                    if (!fromObj.isJB && !toObj.isJB) {
-                        setMessage("⚠️器具同士は直接繋げません。ボックスを経由してください");
-                        setSelection(null);
-                        return;
-                    }
-
-                    setLines([...lines, { id: Date.now(), from: selection, to: id, color, thickness }]);
+                    if (selection === id) { setSelection(null); return; }
+                    setLines([...lines, { from: selection, to: id, color, thickness }]);
                     setSelection(null);
-                    setMessage("接続完了！");
+                    setMessage("接続しました！");
                 }
             };
 
-            const allClear = () => {
-                if(confirm("すべて消去しますか？")) {
-                    setLines([]);
-                    setMessage("リセットしました");
-                }
-            };
-
-            const checkResult = () => {
-                const hasPower20 = lines.some(l => 
-                    (l.from === 'power_l' || l.to === 'power_l') && l.thickness === 2.0
-                );
-                if (!hasPower20) {
-                    alert("不合格：電源ラインに2.0mmが使用されていません！");
-                } else {
-                    alert("合格判定：接続・太さともに良好です！");
-                }
-            };
-
-            return (
-                <div className="flex flex-col h-screen max-w-lg mx-auto bg-gray-50 font-sans">
-                    <header className="bg-white p-4 shadow-sm flex justify-between items-center">
-                        <h1 className="text-lg font-bold text-gray-800">複線図シミュレーター</h1>
-                        <button onClick={() => setShowGuide(true)} className="p-2 text-gray-500 hover:bg-gray-100 rounded-full">
-                           ガイド
-                        </button>
-                    </header>
-
-                    <main className="flex-1 p-2">
-                        <div className="canvas-container rounded-xl shadow-inner relative bg-white">
-                            <svg className="w-full h-full">
-                                <rect x="150" y="70" width="100" height="150" fill="none" stroke="#cbd5e1" strokeDasharray="4" />
-                                <text x="160" y="60" className="fill-gray-400 text-[10px]">ジョイントボックス</text>
-                                
-                                {lines.map(line => {
-                                    const p1 = components.find(c => c.id === line.from);
-                                    const p2 = components.find(c => c.id === line.to);
-                                    return (
-                                        <line key={line.id} x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y}
-                                            stroke={line.color === 'white' ? '#ddd' : line.color}
-                                            strokeWidth={line.thickness === 2.0 ? 6 : 3}
-                                            strokeLinecap="round" />
-                                    );
-                                })}
-
-                                {components.map(c => (
-                                    <g key={c.id} onClick={() => handlePointClick(c.id)} className="cursor-pointer">
-                                        <circle cx={c.x} cy={c.y} r={c.isJB ? 8 : 6} 
-                                            fill={selection === c.id ? "#3b82f6" : (c.isJB ? "#64748b" : "#1e293b")} />
-                                        {c.label && (
-                                            <foreignObject x={c.x < 150 ? c.x - 90 : c.x + 10} y={c.y - 10} width="100" height="20">
-                                                <div className="text-[10px] font-bold text-gray-700 label-bg inline-block">{c.label}</div>
-                                            </foreignObject>
-                                        )}
-                                    </g>
-                                ))}
-                            </svg>
-                        </div>
-                    </main>
-
-                    <footer className="bg-white p-4 border-t border-gray-200">
-                        <p className="text-xs text-center text-blue-500 font-bold mb-3">{message}</p>
-                        <div className="flex justify-between items-end gap-2">
-                            <div className="flex flex-col gap-2">
-                                <span className="text-[10px] text-gray-400 font-bold">COLOR</span>
-                                <div className="flex gap-1">
-                                    {['black', 'white', 'red'].map(c => (
-                                        <button key={c} onClick={() => setColor(c)} 
-                                            className={`w-8 h-8 rounded-full border-2 ${color === c ? 'border-blue-500 scale-110' : 'border-transparent'}`}
-                                            style={{ backgroundColor: c === 'white' ? '#f8fafc' : c, border: c === 'white' ? '1px solid #ddd' : '' }} />
-                                    ))}
-                                </div>
-                            </div>
-                            <div className="flex flex-col gap-2">
-                                <span className="text-[10px] text-gray-400 font-bold">SIZE</span>
-                                <div className="flex bg-gray-100 p-1 rounded-lg">
-                                    {[1.6, 2.0].map(t => (
-                                        <button key={t} onClick={() => setThickness(t)}
-                                            className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${thickness === t ? 'bg-white shadow-sm text-blue-600' : 'text-gray-400'}`}>
-                                            {t}mm
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-                            <div className="flex gap-2">
-                                <button onClick={allClear} className="bg-red-50 text-red-500 px-4 py-2 rounded-lg text-xs font-bold">リセット</button>
-                                <button onClick={checkResult} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md">判定</button>
-                            </div>
-                        </div>
-                    </footer>
-
-                    {showGuide && (
-                        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-6 z-50" onClick={() => setShowGuide(false)}>
-                            <div className="bg-white p-6 rounded-2xl w-full max-w-xs shadow-2xl" onClick={e => e.stopPropagation()}>
-                                <h2 className="text-lg font-bold mb-4 border-b pb-2">操作ガイド</h2>
-                                <ul className="text-xs space-y-3 text-gray-600">
-                                    <li>① 端子をタップ、次に接続先をタップで結線</li>
-                                    <li>② 2.0mmは線が太く描画されます</li>
-                                    <li>③ 必ずジョイントボックス内の点を通してください</li>
-                                    <li>④ 削除機能は現在PCの右クリックのみ対応です</li>
-                                </ul>
-                                <button onClick={() => setShowGuide(false)} className="mt-6 w-full bg-blue-600 text-white py-3 rounded-xl font-bold">閉じる</button>
-                            </div>
-                        </div>
-                    )}
-                </div>
+            return e('div', { className: 'flex flex-col h-screen' },
+                e('header', { className: 'bg-white p-4 shadow-sm font-bold text-center' }, "複線図マスター 公開版"),
+                e('div', { className: 'canvas-area' },
+                    e('svg', { className: 'w-full h-full' },
+                        // ジョイントボックス枠
+                        e('rect', { x: 130, y: 70, width: 90, height: 120, fill: 'none', stroke: '#ccc', strokeDasharray: '4' }),
+                        // 配線
+                        lines.map((l, i) => {
+                            const p1 = points.find(p => p.id === l.from);
+                            const p2 = points.find(p => p.id === l.to);
+                            return e('line', {
+                                key: i, x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y,
+                                stroke: l.color, strokeWidth: l.thickness === 2.0 ? 6 : 3, strokeLinecap: 'round'
+                            });
+                        }),
+                        // 端子
+                        points.map(p => e('g', { key: p.id, onClick: () => handleTap(p.id), className: 'node' },
+                            e('circle', { cx: p.x, cy: p.y, r: 8, fill: selection === p.id ? '#3b82f6' : '#1e293b' }),
+                            p.label && e('text', { x: p.x - 20, y: p.y - 15, className: 'text-[10px] font-bold' }, p.label)
+                        ))
+                    )
+                ),
+                e('footer', { className: 'bg-white p-6 flex-1' },
+                    e('p', { className: 'text-center text-blue-600 font-bold mb-4' }, message),
+                    e('div', { className: 'flex justify-between items-center mb-6' },
+                        e('div', { className: 'flex gap-2' },
+                            ['black', 'red', 'blue'].map(c => e('button', {
+                                key: c, onClick: () => setColor(c),
+                                className: `w-10 h-10 rounded-full border-4 ${color === c ? 'border-yellow-400' : 'border-transparent'}`,
+                                style: { backgroundColor: c }
+                            }))
+                        ),
+                        e('div', { className: 'flex bg-gray-200 p-1 rounded-lg' },
+                            [1.6, 2.0].map(t => e('button', {
+                                key: t, onClick: () => setThickness(t),
+                                className: `px-4 py-2 rounded-md text-sm font-bold ${thickness === t ? 'bg-white shadow' : 'text-gray-500'}`
+                            }, t + "mm"))
+                        )
+                    ),
+                    e('button', { 
+                        onClick: () => { if(confirm("消去しますか？")) setLines([]); },
+                        className: 'w-full bg-red-500 text-white py-4 rounded-xl font-bold'
+                    }, "リセット")
+                )
             );
+        };
 
-            // React 18 の安定したレンダー方法
-            const rootElement = document.getElementById('root');
-            const root = ReactDOM.createRoot(rootElement);
-            root.render(<App />);
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(e(App));
     </script>
 </body>
 </html>
