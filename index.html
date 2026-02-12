@@ -24,10 +24,8 @@
     <script type="text/babel">
         const { useState, useMemo, useRef, useEffect } = React;
 
-        // 【ここがポイント】
-        // 同じ階層にある logo.png を読み込みます。
-        // ローカル確認でも、GitHub Pagesでも、Vercelでもこれで共通化できます。
-        const COMPANY_LOGO = "./logo.png"; 
+        // 指定されたファイル名でロゴを参照
+        const COMPANY_LOGO = "./加藤電気工事_20250510_155544_0000~3.png"; 
 
         const LucideIcon = ({ name, size = 20 }) => {
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
@@ -103,7 +101,7 @@
                     if (jSegs.length < 2) return;
                     let score = 0; jSegs.forEach(s => score += (s.thick === 2.0 ? 2 : 1));
                     let correct = score <= 2 ? "○" : score <= 4 ? "小" : "中";
-                    if (j.stamp !== correct) errors.push("刻印が不適切です。");
+                    if (j.stamp !== correct) errors.push("接続点の刻印が不適切です。");
                 });
 
                 if (errors.length === 0 && segments.length > 0) setJudgment({ ok: true, msg: "合格！", advice: "加藤電気工事（有）標準施工、認定です。" });
@@ -121,8 +119,8 @@
                     
                     <header className="h-20 header-bg flex justify-between items-center px-4 shrink-0 z-[60] shadow-md">
                         <div className="flex items-center gap-3">
-                            {/* logo.png という相対パスで読み込み */}
-                            <img src={COMPANY_LOGO} alt="Logo" className="h-14 object-contain" onError={(e) => { e.target.src="https://lucide.dev/api/icons/factory"; }} />
+                            {/* 日本語ファイル名に対応した画像タグ */}
+                            <img src={COMPANY_LOGO} alt="加藤電気工事ロゴ" className="h-14 object-contain" onError={(e) => { e.target.style.display='none'; }} />
                             <div className="flex flex-col">
                                 <h1 className="text-[#00a0e9] text-lg font-black tracking-tighter leading-none">加藤電気工事（有）</h1>
                                 <span className="text-[9px] text-slate-500 font-bold mt-1 tracking-widest uppercase italic">~ Always Improving ~</span>
@@ -158,6 +156,7 @@
                                 </g>
                             ))}
 
+                            {/* 配線 */}
                             {segments.map(s => {
                                 const t = terminals.find(term => term.id === s.tId);
                                 const j = joints.find(joint => joint.id === s.jId);
@@ -166,6 +165,7 @@
                                     onPointerUp={() => { clearTimeout(deleteTimerRef.current); setPressingSegId(null); }} />;
                             })}
 
+                            {/* ジョイント点 */}
                             {joints.map(j => (
                                 <g key={j.id} onPointerDown={(e) => { e.stopPropagation(); if(selectedT) { setSegments([...segments, { id: `s-${Date.now()}`, tId: selectedT, jId: j.id, color, thick }]); setSelectedT(null); } else { setMovingJointId(j.id); } }} onDoubleClick={() => setEditingJId(j.id)} className="cursor-pointer">
                                     <circle cx={j.x} cy={j.y} r="25" fill="transparent" />
@@ -174,6 +174,7 @@
                                 </g>
                             ))}
 
+                            {/* 端子 */}
                             {terminals.map(t => (
                                 <g key={t.id} onPointerDown={(e) => { e.stopPropagation(); setSelectedT(t.id); }} className="cursor-pointer">
                                     <circle cx={t.x} cy={t.y} r={14} fill={selectedT === t.id ? "#00a0e9" : "#1e293b"} className={selectedT === t.id ? "active-node" : ""} stroke="white" strokeWidth="2.5" />
@@ -182,7 +183,7 @@
                             ))}
                         </svg>
 
-                        {/* Modals */}
+                        {/* モーダル群 */}
                         {showSld && (
                             <div className="absolute inset-0 bg-white z-[100] p-6 flex flex-col" onClick={() => setShowSld(false)}>
                                 <h2 className="font-black text-[#00a0e9] text-xl mb-6">練習用単線図</h2>
@@ -199,13 +200,13 @@
                         {showHelp && (
                             <div className="absolute inset-0 bg-slate-900/95 z-[100] p-8 text-white flex flex-col" onClick={() => setShowHelp(false)}>
                                 <h2 className="text-2xl font-black mb-8 flex items-center gap-2"><LucideIcon name="help-circle" /> 操作方法</h2>
-                                <div className="space-y-6 font-bold text-lg">
+                                <div className="space-y-6 font-bold text-lg text-slate-200">
                                     <p>● 端子タップで結線開始</p>
                                     <p>● 黒い点を【ドラッグ】して移動</p>
                                     <p>● 黒い点を【ダブルタップ】で刻印</p>
                                     <p>● 配線を【1秒長押し】で削除</p>
                                 </div>
-                                <button className="mt-auto bg-white text-[#00a0e9] py-4 rounded-xl font-black">了解</button>
+                                <button className="mt-auto bg-white text-[#00a0e9] py-4 rounded-xl font-black shadow-lg">了解</button>
                             </div>
                         )}
                         {editingJId && (
