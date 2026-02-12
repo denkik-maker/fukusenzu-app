@@ -16,6 +16,7 @@
         .canvas-bg { background: radial-gradient(#e2e8f0 1.5px, transparent 1.5px); background-size: 30px 30px; }
         .active-node { animation: pulse 1.5s infinite; }
         @keyframes pulse { 0% { r: 14; opacity: 1; } 50% { r: 22; opacity: 0.5; } 100% { r: 14; opacity: 1; } }
+        .deleting-line { stroke: #ef4444 !important; stroke-width: 14px !important; opacity: 0.7; transition: all 0.2s; }
         .header-bg { background-color: #ffffff; border-bottom: 3px solid #00a0e9; }
         .modal-animate { animation: fadeIn 0.2s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
@@ -27,12 +28,10 @@
     <script type="text/babel">
         const { useState, useMemo, useRef, useEffect } = React;
 
-        // 画像パス設定
         const LOGO_PATH = "./加藤電気工事_20250510_155544_0000~3.png";
-        const TANSEN_PATH = "./Screenshot_20260212-173222~2.png"; // 指定された名称
+        const TANSEN_PATH = "./Screenshot_20260212-173222~2.png";
 
-        // 問題データ（今後ここを増やして13問対応にします）
-        const INITIAL_COMPONENTS = [
+        const COMPONENTS = [
             { id: 'pwr', label: '電源', x: 70, y: 160, type: 'breaker' },
             { id: 'lmp', label: 'ランプ', x: 300, y: 60, type: 'lamp' },
             { id: 'swi', label: 'スイッチ', x: 300, y: 390, type: 'switch' },
@@ -55,11 +54,10 @@
 
         const LucideIcon = ({ name }) => {
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
-            return <i data-lucide={name} style={{ width: 20, height: 20 }}></i>;
+            return <i data-lucide={name} style={{ width: 22, height: 22 }}></i>;
         };
 
         const App = () => {
-            const [components, setComponents] = useState(INITIAL_COMPONENTS);
             const [joints, setJoints] = useState([]);
             const [segments, setSegments] = useState([]);
             const [selectedT, setSelectedT] = useState(null);
@@ -67,8 +65,12 @@
             const [thick, setThick] = useState(1.6);
             const [showSld, setShowSld] = useState(false);
             const [showHelp, setShowHelp] = useState(false);
+            const [editingJId, setEditingJId] = useState(null);
+            const [judgment, setJudgment] = useState(null);
             const [movingJointId, setMovingJointId] = useState(null);
+            const [pressingSegId, setPressingSegId] = useState(null);
             
+            const deleteTimerRef = useRef(null);
             const svgRef = useRef(null);
 
             useEffect(() => {
@@ -78,9 +80,9 @@
             }, []);
 
             const terminals = useMemo(() => TERMINAL_DEFS.map(t => {
-                const parent = components.find(c => c.id === t.parentId);
+                const parent = COMPONENTS.find(c => c.id === t.parentId);
                 return { ...t, x: parent.x + t.ox, y: parent.y + t.oy };
-            }), [components]);
+            }), []);
 
             const getPos = (e) => {
                 const rect = svgRef.current.getBoundingClientRect();
@@ -89,17 +91,32 @@
                 return { x: (cx - rect.left) * (600 / rect.width), y: (cy - rect.top) * (450 / rect.height) };
             };
 
+            const runJudge = () => {
+                const errors = [];
+                const nLine = segments.find(s => s.tId === 'p_n');
+                if (!nLine) errors.push("電源N(接地側)が未結線です。");
+                else if (nLine.color !== 'white') errors.push("電源Nは白線(W)で繋いでください。");
+                
+                joints.forEach(j => {
+                    const jSegs = segments.filter(s => s.jId === j.id);
+                    if (jSegs.length < 2) return;
+                    let score = 0; jSegs.forEach(s => score += (s.thick === 2.0 ? 2 : 1));
+                    let correct = score <= 2 ? "○" : score <= 4 ? "小" : "中";
+                    if (j.stamp !== correct) errors.push("接続点の刻印が不適切です。");
+                });
+
+                if (errors.length === 0 && segments.length > 0) setJudgment({ ok: true, msg: "合格！", advice: "加藤電気工事（有）認定の施工です。" });
+                else setJudgment({ ok: false, msg: "要修正", advice: errors[0] || "未完成です。" });
+            };
+
             return (
                 <div className="flex flex-col h-full overflow-hidden" 
                      onPointerMove={(e) => { 
-                         if (movingJointId) { 
-                             const p = getPos(e); 
-                             setJoints(prev => prev.map(j => j.id === movingJointId ? {...j, x: p.x, y: p.y} : j)); 
-                         } 
+                         if (movingJointId) { const p = getPos(e); setJoints(prev => prev.map(j => j.id === movingJointId ? {...j, x: p.x, y: p.y} : j)); } 
                      }}
-                     onPointerUp={() => setMovingJointId(null)}>
+                     onPointerUp={() => { clearTimeout(deleteTimerRef.current); setPressingSegId(null); setMovingJointId(null); }}>
                     
-                    <header className="h-16 header-bg flex justify-between items-center px-4 shrink-0 z-50">
+                    <header className="h-16 header-bg flex justify-between items-center px-4 shrink-0 z-50 shadow-md">
                         <div className="flex items-center gap-2">
                             <img src={LOGO_PATH} className="h-10 object-contain" />
                             <h1 className="text-[#00a0e9] text-lg font-black tracking-tighter leading-tight">加藤電気工事（有）</h1>
@@ -107,7 +124,7 @@
                         <div className="flex gap-2">
                             <button onClick={() => setShowSld(true)} className="p-2 bg-slate-100 rounded-xl"><LucideIcon name="file-text" /></button>
                             <button onClick={() => setShowHelp(true)} className="p-2 bg-slate-100 rounded-xl"><LucideIcon name="help-circle" /></button>
-                            <button className="bg-[#00a0e9] text-white px-4 py-2 rounded-xl text-xs font-black">判定</button>
+                            <button onClick={runJudge} className="bg-[#00a0e9] text-white px-4 py-2 rounded-xl text-xs font-black shadow-lg active:scale-95 transition-transform">判定</button>
                         </div>
                     </header>
 
@@ -118,14 +135,14 @@
                                 const p = getPos(e);
                                 if (p.x < 150 || p.x > 450) return;
                                 const jId = `j-${Date.now()}`;
-                                setJoints([...joints, { id: jId, x: p.x, y: p.y }]);
+                                setJoints([...joints, { id: jId, x: p.x, y: p.y, stamp: "" }]);
                                 setSegments([...segments, { id: `s-${Date.now()}`, tId: selectedT, jId, color, thick }]);
                                 setSelectedT(null);
                              }}>
                             
                             <rect x="175" y="100" width="250" height="230" rx="20" fill="#f8fafc" stroke="#e2e8f0" strokeDasharray="6" />
 
-                            {components.map(c => (
+                            {COMPONENTS.map(c => (
                                 <g key={c.id} transform={`translate(${c.x}, ${c.y})`}>
                                     {c.type === 'breaker' && <g><rect x="-30" y="-25" width="60" height="50" fill="white" stroke="black" strokeWidth="2"/><text textAnchor="middle" y="8" className="font-bold">B</text></g>}
                                     {c.type === 'lamp' && <g><circle r="25" fill="white" stroke="black" strokeWidth="2"/><line x1="-18" y1="-18" x2="18" y2="18" stroke="black" strokeWidth="2"/><line x1="18" y1="-18" x2="-18" y2="18" stroke="black" strokeWidth="2"/></g>}
@@ -141,12 +158,18 @@
                                 const j = joints.find(joint => joint.id === s.jId);
                                 return <path key={s.id} d={`M ${t.x} ${t.y} L ${j.x} ${t.y} L ${j.x} ${j.y}`} fill="none" 
                                              stroke={s.color === 'white' ? '#94a3b8' : s.color === 'red' ? '#ef4444' : '#1e293b'} 
-                                             strokeWidth={s.thick === 1.6 ? 6 : 10} />;
+                                             strokeWidth={s.thick === 1.6 ? 6 : 10}
+                                             className={pressingSegId === s.id ? 'deleting-line' : ''}
+                                             onPointerDown={(e) => { e.stopPropagation(); setPressingSegId(s.id); deleteTimerRef.current = setTimeout(() => { setSegments(segments.filter(seg => seg.id !== s.id)); setPressingSegId(null); }, 1000); }} 
+                                             onPointerUp={() => { clearTimeout(deleteTimerRef.current); setPressingSegId(null); }} />;
                             })}
 
                             {joints.map(j => (
-                                <circle key={j.id} cx={j.x} cy={j.y} r="10" fill="#1e293b" stroke="white" strokeWidth="2" 
-                                        onPointerDown={(e) => { e.stopPropagation(); if(selectedT) { setSegments([...segments, { id: `s-${Date.now()}`, tId: selectedT, jId: j.id, color, thick }]); setSelectedT(null); } else { setMovingJointId(j.id); } }} />
+                                <g key={j.id} onPointerDown={(e) => { e.stopPropagation(); if(selectedT) { setSegments([...segments, { id: `s-${Date.now()}`, tId: selectedT, jId: j.id, color, thick }]); setSelectedT(null); } else { setMovingJointId(j.id); } }} onDoubleClick={() => setEditingJId(j.id)}>
+                                    <circle cx={j.x} cy={j.y} r="25" fill="transparent" />
+                                    <circle cx={j.x} cy={j.y} r="10" fill="#1e293b" stroke="white" strokeWidth="2" />
+                                    {j.stamp && <g transform={`translate(${j.x+15}, ${j.y-15})`}><rect x="-10" y="-10" width="20" height="20" fill="#00a0e9" rx="4" /><text textAnchor="middle" y="5" className="fill-white font-black text-xs">{j.stamp}</text></g>}
+                                </g>
                             ))}
 
                             {terminals.map(t => (
@@ -157,37 +180,56 @@
                             ))}
                         </svg>
 
-                        {/* 単線図：写真表示 */}
+                        {/* モーダル：単線図写真 */}
                         {showSld && (
                             <div className="absolute inset-0 bg-slate-900 z-[100] flex flex-col modal-animate" onClick={() => setShowSld(false)}>
-                                <div className="p-4 flex justify-end">
-                                    <button className="text-white p-2 bg-white/10 rounded-full"><LucideIcon name="x" /></button>
-                                </div>
+                                <div className="p-4 flex justify-end"><button className="text-white p-2"><LucideIcon name="x" /></button></div>
                                 <div className="flex-1 flex items-center justify-center p-4">
-                                    <img src={TANSEN_PATH} className="max-w-full max-h-full object-contain rounded shadow-2xl" alt="単線図写真" />
+                                    <img src={TANSEN_PATH} className="max-w-full max-h-full object-contain rounded shadow-2xl" />
                                 </div>
-                                <div className="p-8 bg-black/50 text-white text-center font-bold">画面をタップして戻る</div>
+                                <div className="p-8 text-white text-center font-bold">画面をタップして戻る</div>
                             </div>
                         )}
 
+                        {/* モーダル：ヘルプ */}
                         {showHelp && (
                             <div className="absolute inset-0 bg-slate-900/95 z-[100] p-8 text-white flex flex-col modal-animate" onClick={() => setShowHelp(false)}>
-                                <h2 className="text-2xl font-black mb-8 text-[#00a0e9]">操作方法</h2>
+                                <h2 className="text-2xl font-black mb-8 text-[#00a0e9] flex items-center gap-2"><LucideIcon name="help-circle" /> 操作方法</h2>
                                 <div className="space-y-6 text-lg font-bold">
-                                    <p>1. 丸い端子をタップして線を引き出す</p>
-                                    <p>2. 中央の四角いエリアをタップして接続</p>
-                                    <p>3. 黒い接続点をドラッグして移動</p>
+                                    <div className="bg-slate-800 p-4 rounded-xl">1. 丸い端子をタップして線を引き出す</div>
+                                    <div className="bg-slate-800 p-4 rounded-xl">2. 中央エリアをタップして接続</div>
+                                    <div className="bg-slate-800 p-4 rounded-xl">3. 接続点をダブルタップで刻印選択</div>
+                                    <div className="bg-slate-800 p-4 rounded-xl border-l-4 border-rose-500">4. 線を1秒間長押しで削除</div>
                                 </div>
-                                <button className="mt-auto bg-[#00a0e9] py-4 rounded-2xl font-black">スタート</button>
+                                <button className="mt-auto bg-[#00a0e9] py-4 rounded-2xl font-black">トレーニングに戻る</button>
+                            </div>
+                        )}
+
+                        {editingJId && (
+                            <div className="absolute inset-0 bg-slate-900/40 flex items-center justify-center z-[110]" onClick={() => setEditingJId(null)}>
+                                <div className="bg-white p-6 rounded-3xl flex gap-4" onClick={e => e.stopPropagation()}>
+                                    {["○", "小", "中"].map(s => (
+                                        <button key={s} onClick={() => { setJoints(joints.map(j => j.id === editingJId ? {...j, stamp: s} : j)); setEditingJId(null); }} className="w-16 h-16 bg-slate-100 rounded-2xl font-black text-xl active:bg-[#00a0e9] active:text-white">{s}</button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {judgment && (
+                            <div className={`absolute top-20 left-4 right-4 bg-white p-5 rounded-3xl shadow-2xl border-l-8 ${judgment.ok ? 'border-emerald-500' : 'border-rose-500'} z-[80] modal-animate`}>
+                                <div className="flex justify-between items-start">
+                                    <div><h3 className="font-black text-lg">{judgment.msg}</h3><p className="text-xs text-slate-500 font-bold">{judgment.advice}</p></div>
+                                    <button onClick={() => setJudgment(null)}><LucideIcon name="x" /></button>
+                                </div>
                             </div>
                         )}
                     </main>
 
                     <footer className="h-24 bg-slate-100 flex items-center px-4 gap-4 shrink-0 z-50 border-t border-slate-200">
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 shrink-0">
                             {['black', 'white', 'red'].map(k => (
                                 <button key={k} onClick={() => setColor(k)} className={`p-3 rounded-xl border-2 ${color === k ? 'border-[#00a0e9] bg-white' : 'border-transparent'}`}>
-                                    <div className="w-6 h-6 rounded-full border shadow-inner" style={{backgroundColor: k === 'white' ? '#fff' : k === 'red' ? '#ef4444' : '#1e293b'}} />
+                                    <div className="w-6 h-6 rounded-full border" style={{backgroundColor: k === 'white' ? '#fff' : k === 'red' ? '#ef4444' : '#1e293b'}} />
                                 </button>
                             ))}
                         </div>
@@ -196,7 +238,7 @@
                                 <button key={v} onClick={() => setThick(v)} className={`px-4 py-3 rounded-lg text-[11px] font-black ${thick === v ? 'bg-[#00a0e9] text-white' : 'text-slate-400'}`}>{v}mm</button>
                             ))}
                         </div>
-                        <button onClick={() => { if(confirm("やり直しますか？")) { setSegments([]); setJoints([]); } }} className="ml-auto p-4 text-slate-400"><LucideIcon name="trash-2" /></button>
+                        <button onClick={() => { if(confirm("消去しますか？")) { setSegments([]); setJoints([]); setJudgment(null); } }} className="ml-auto p-4 text-slate-400"><LucideIcon name="trash-2" /></button>
                     </footer>
                 </div>
             );
