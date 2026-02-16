@@ -11,8 +11,31 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         :root { --app-height: 100vh; }
-        html, body { height: var(--app-height); overflow: hidden; margin: 0; background-color: #0f172a; font-family: sans-serif; -webkit-user-select: none; touch-action: none; }
-        #root { height: 100%; display: flex; flex-direction: column; }
+        /* PC背景用のスタイル：アプリ本体を中央に寄せる */
+        body { 
+            height: var(--app-height); 
+            overflow: hidden; 
+            margin: 0; 
+            background-color: #1e293b; /* PC背景は暗色で見やすく */
+            font-family: sans-serif; 
+            -webkit-user-select: none; 
+            touch-action: none; 
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        /* アプリ本体のコンテナ：最大幅を設定し、スマホ形状を維持 */
+        #app-container {
+            width: 100%;
+            height: 100%;
+            max-width: 500px; /* スマホ・タブレット幅に制限 */
+            background-color: #fff;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            box-shadow: 0 0 40px rgba(0,0,0,0.5); /* 影をつけて浮き上がらせる */
+        }
+        
         .canvas-bg { background: radial-gradient(#e2e8f0 1.5px, transparent 1.5px); background-size: 30px 30px; }
         .active-node { animation: pulse 1.5s infinite; fill: #00a0e9 !important; stroke: white !important; }
         @keyframes pulse { 0% { r: 14; opacity: 1; } 50% { r: 18; opacity: 0.7; } 100% { r: 14; opacity: 1; } }
@@ -27,7 +50,7 @@
     </style>
 </head>
 <body>
-    <div id="root"></div>
+    <div id="root" style="width: 100%; height: 100%; display: flex; justify-content: center;"></div>
 
     <script type="text/babel">
         const { useState, useMemo, useRef, useEffect } = React;
@@ -133,10 +156,7 @@
                 if (selectedT) { setSegments(prev => [...prev, { id: `s-${Date.now()}`, tId: selectedT, jId, color, thick }]); setSelectedT(null); }
             };
 
-            // --- 判定ロジック (V35仕様：配置→配線→刻印) ---
             const runJudge = () => {
-                
-                // 1. 【器具の配置チェック】
                 const missing = [];
                 if (!items.some(i => i.type === 'breaker')) missing.push("電源");
                 if (!items.some(i => i.type === 'lamp')) missing.push("ランプ");
@@ -149,9 +169,6 @@
                     return;
                 }
 
-                // 2. 【配線の正しさチェック】
-                
-                // 2-1. 未結線チェック
                 let unconnectedErrors = [];
                 items.forEach(item => {
                     if (item.type === 'box') return;
@@ -161,35 +178,26 @@
                         if (!isConnected) unconnectedErrors.push(`${ITEM_TYPES[item.type].label}の(${t.r})端子が未結線です。`);
                     });
                 });
-                if (unconnectedErrors.length > 0) {
-                    setJudgment({ ok: false, msg: "未結線", advice: unconnectedErrors[0] });
-                    return;
-                }
+                if (unconnectedErrors.length > 0) { setJudgment({ ok: false, msg: "未結線", advice: unconnectedErrors[0] }); return; }
 
-                // 電源特定
                 const pwr = items.find(i => i.type === 'breaker');
-                const pwrN = { itemId: pwr.id, termId: 'n' };
-                const pwrL = { itemId: pwr.id, termId: 'l' };
-
-                // 2-2. 電源線の太さチェック
                 const pwrSegs = segments.filter(s => s.tId.itemId === pwr.id);
                 for (const s of pwrSegs) {
-                    if (s.thick !== 2.0) {
-                        setJudgment({ ok: false, msg: "電線選定ミス", advice: "電源からのケーブルは「2.0mm」を使用してください。" });
-                        return;
-                    }
+                    if (s.thick !== 2.0) { setJudgment({ ok: false, msg: "電線選定ミス", advice: "電源からのケーブルは「2.0mm」を使用してください。" }); return; }
                 }
 
-                // 接続グループの探索ヘルパー
                 const getConnectedGroup = (startTerm) => {
                     const group = new Set();
                     const queue = [startTerm];
                     const visitedJ = new Set();
+                    const connectedItems = [];
                     while(queue.length > 0) {
                         const curr = queue.shift();
                         const key = `${curr.itemId}-${curr.termId}`;
                         if(group.has(key)) continue;
                         group.add(key);
+                        const item = items.find(i => i.id === curr.itemId);
+                        if(item) connectedItems.push({type: item.type, itemId: item.id});
                         const connectedSegs = segments.filter(s => s.tId.itemId === curr.itemId && s.tId.termId === curr.termId);
                         connectedSegs.forEach(seg => {
                             if(visitedJ.has(seg.jId)) return;
@@ -198,75 +206,56 @@
                             jointSegs.forEach(js => queue.push(js.tId));
                         });
                     }
-                    return group;
+                    return { group, connectedItems };
                 };
 
-                const groupN = getConnectedGroup(pwrN); // 電源Nに繋がっているグループ
-                const groupL = getConnectedGroup(pwrL); // 電源Lに繋がっているグループ
+                const groupN = getConnectedGroup({ itemId: pwr.id, termId: 'n' }).group;
+                const groupL = getConnectedGroup({ itemId: pwr.id, termId: 'l' }).group;
 
-                // 2-3. 極性チェック (N側)
                 for (const item of items) {
                     if (['lamp', 'outlet', 'omitted'].includes(item.type)) {
                         const targetT = ITEM_TYPES[item.type].terminals.find(t => t.r === 'W');
-                        if (targetT && !groupN.has(`${item.id}-${targetT.id}`)) {
-                            setJudgment({ ok: false, msg: "誤配線 (接地側)", advice: `${ITEM_TYPES[item.type].label}の接地側(W)が電源のNに繋がっていません。` });
-                            return;
-                        }
+                        if (targetT && !groupN.has(`${item.id}-${targetT.id}`)) { setJudgment({ ok: false, msg: "誤配線 (接地側)", advice: `${ITEM_TYPES[item.type].label}の接地側(W)が電源のNに繋がっていません。` }); return; }
                     }
                 }
 
-                // 2-4. 極性チェック (L側 - スイッチ・コンセント)
                 for (const item of items) {
                     if (['switch', 'outlet'].includes(item.type)) {
-                        const targetT = ITEM_TYPES[item.type].terminals.find(t => t.r === 'L'); // スイッチのL、コンセントのL
-                        if (targetT && !groupL.has(`${item.id}-${targetT.id}`)) {
-                            setJudgment({ ok: false, msg: "誤配線 (非接地側)", advice: `${ITEM_TYPES[item.type].label}の非接地側(L)が電源のLに繋がっていません。` });
-                            return;
-                        }
+                        const targetT = ITEM_TYPES[item.type].terminals.find(t => t.r === 'L');
+                        if (targetT && !groupL.has(`${item.id}-${targetT.id}`)) { setJudgment({ ok: false, msg: "誤配線 (非接地側)", advice: `${ITEM_TYPES[item.type].label}の非接地側(L)が電源のLに繋がっていません。` }); return; }
                     }
                 }
 
-                // 2-5. スイッチ回路チェック (ランプの黒線が電源Lに直接繋がっていないか)
                 for (const item of items) {
                     if (item.type === 'lamp') {
-                        const targetT = ITEM_TYPES[item.type].terminals.find(t => t.r === 'S'); // ランプの黒線側
-                        if (groupL.has(`${item.id}-${targetT.id}`)) {
-                            setJudgment({ ok: false, msg: "誤配線 (スイッチ)", advice: "ランプがスイッチを経由せずに電源Lに繋がっています（常時点灯）。" });
-                            return;
-                        }
+                        const lampBlackT = ITEM_TYPES[item.type].terminals.find(t => t.r === 'S');
+                        const lampBlackNet = getConnectedGroup({ itemId: item.id, termId: lampBlackT.id });
+                        if (lampBlackNet.group.has(`${pwr.id}-l`)) { setJudgment({ ok: false, msg: "誤配線 (スイッチ)", advice: "ランプが電源Lに直結しています（常時点灯）。スイッチを通してください。" }); return; }
+                        const hasSwitch = lampBlackNet.connectedItems.some(i => i.type === 'switch');
+                        if (!hasSwitch) { setJudgment({ ok: false, msg: "誤配線 (スイッチ)", advice: "ランプの黒線がスイッチに繋がっていません。" }); return; }
                     }
                 }
 
-                // 3. 【刻印チェック】
                 for (const j of joints) {
                     const connected = segments.filter(s => s.jId === j.id);
-                    if (connected.length < 2) continue; // 接続点として成立していないものは無視
-
+                    if (connected.length < 2) continue;
                     let score = 0;
                     connected.forEach(s => score += (s.thick === 2.0 ? 2 : 1));
-                    let correct = "";
-                    if (score <= 2) correct = "○";
-                    else if (score <= 4) correct = "小";
-                    else correct = "中";
-
-                    if (j.stamp !== correct) {
-                        setJudgment({ ok: false, msg: "刻印ミス", advice: `接続点(x:${Math.round(j.x)})の刻印が違います。（正解: ${correct}）` });
-                        return;
-                    }
+                    let correct = score <= 2 ? "○" : score <= 4 ? "小" : "中";
+                    if (j.stamp !== correct) { setJudgment({ ok: false, msg: "刻印ミス", advice: `接続点(x:${Math.round(j.x)})の刻印が違います。（正解: ${correct}）` }); return; }
                 }
 
-                // 全てクリア
                 setJudgment({ ok: true, msg: "合格！", advice: "加藤電気工事（有）認定の施工です。おめでとうございます！" });
             };
 
             return (
-                <div className="flex flex-col h-full overflow-hidden" onPointerMove={handleMove} onPointerUp={handleUp} onPointerLeave={handleUp}>
+                <div id="app-container">
                     <header className="h-14 header-bg flex justify-between items-center px-4 shrink-0 z-50 shadow-sm">
-                        <div className="flex items-center gap-2">
-                            <img src={LOGO_PATH} className="h-8 object-contain" />
-                            <h1 className="text-[#00a0e9] text-sm font-black tracking-tight">加藤電気工事（有）</h1>
+                        <div className="flex items-center gap-2 min-w-0">
+                            <img src={LOGO_PATH} className="h-8 object-contain shrink-0" />
+                            <h1 className="text-[#00a0e9] text-sm md:text-base font-black tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">加藤電気工事（有）</h1>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 shrink-0">
                             <button onClick={() => setShowSld(true)} className="p-2 bg-slate-100 rounded-lg active:bg-slate-200"><LucideIcon name="file-text" /></button>
                             <button onClick={() => setShowHelp(true)} className="p-2 bg-slate-100 rounded-lg active:bg-slate-200"><LucideIcon name="help-circle" /></button>
                             <button onClick={runJudge} className="bg-[#00a0e9] text-white px-3 py-1.5 rounded-lg text-xs font-black shadow-md active:translate-y-0.5 transition-transform">判定</button>
@@ -291,7 +280,7 @@
                         ))}
                     </div>
 
-                    <main className="flex-1 relative bg-white overflow-hidden">
+                    <main className="flex-1 relative bg-white overflow-hidden" onPointerMove={handleMove} onPointerUp={handleUp} onPointerLeave={handleUp}>
                         <svg ref={svgRef} viewBox="0 0 600 450" className="w-full h-full canvas-bg touch-none" onPointerDown={handleCanvasTap}>
                             {items.map(item => (
                                 <g key={item.id} transform={`translate(${item.x}, ${item.y})`}>
@@ -339,7 +328,7 @@
                                 </g>
                             ))}
                         </svg>
-                        {showSld && <div className="absolute inset-0 modal-overlay z-[100] flex flex-col" onClick={() => setShowSld(false)}><div className="p-4 flex justify-end text-white"><LucideIcon name="x" /></div><div className="flex-1 flex items-center justify-center p-4"><img src={TANSEN_PATH} className="max-w-full max-h-full object-contain rounded shadow-2xl" /></div></div>}
+                        {showSld && <div className="absolute inset-0 modal-overlay z-[100] flex flex-col" onClick={() => setShowSld(false)}><div className="p-4 flex justify-end text-white"><LucideIcon name="x" /></div><div className="flex-1 flex items-center justify-center p-4 overflow-auto"><img src={TANSEN_PATH} className="max-w-full max-h-full object-contain rounded shadow-2xl" /></div></div>}
                         {showHelp && <div className="absolute inset-0 modal-overlay z-[100] p-8 text-white flex flex-col justify-center" onClick={() => setShowHelp(false)}><h2 className="text-2xl font-black mb-6 text-[#00a0e9] flex items-center gap-2"><LucideIcon name="help-circle" /> 操作方法</h2><div className="space-y-4 font-bold text-lg"><p>1. 器具追加・ドラッグで配置</p><p>2. 端子タップで結線</p><p>3. 接続点ダブルタップで刻印</p><p class="text-rose-400">※ 線・器具を長押しで削除</p></div><button className="mt-8 bg-[#00a0e9] py-3 rounded-xl font-black shadow-lg">閉じる</button></div>}
                         {editingJId && <div className="absolute inset-0 bg-slate-900/50 flex items-center justify-center z-[110]" onClick={() => setEditingJId(null)}><div className="bg-white p-6 rounded-3xl flex gap-4 shadow-2xl" onClick={e => e.stopPropagation()}>{["○", "小", "中"].map(s => <button key={s} onClick={() => { setJoints(prev => prev.map(j => j.id === editingJId ? {...j, stamp: s} : j)); setEditingJId(null); }} className="w-16 h-16 bg-slate-100 rounded-2xl font-black text-2xl hover:bg-[#00a0e9] hover:text-white transition-colors">{s}</button>)}</div></div>}
                         {judgment && <div className={`absolute top-20 left-4 right-4 bg-white p-6 rounded-2xl shadow-2xl border-l-8 ${judgment.ok ? 'border-emerald-500' : 'border-rose-500'} z-[90]`} onClick={() => setJudgment(null)}><div className="flex justify-between items-start"><div><h3 className="font-black text-xl mb-1">{judgment.msg}</h3><p className="text-sm text-slate-600 font-bold">{judgment.advice}</p></div><LucideIcon name="x" className="text-slate-400" /></div></div>}
