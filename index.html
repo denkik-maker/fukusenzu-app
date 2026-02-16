@@ -11,15 +11,19 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         :root { --app-height: 100vh; }
-        html, body { height: var(--app-height); overflow: hidden; margin: 0; background-color: #0f172a; font-family: sans-serif; -webkit-user-select: none; }
+        html, body { height: var(--app-height); overflow: hidden; margin: 0; background-color: #0f172a; font-family: sans-serif; -webkit-user-select: none; touch-action: none; }
         #root { height: 100%; display: flex; flex-direction: column; }
         .canvas-bg { background: radial-gradient(#e2e8f0 1.5px, transparent 1.5px); background-size: 30px 30px; }
-        .active-node { animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0% { r: 14; opacity: 1; } 50% { r: 22; opacity: 0.5; } 100% { r: 14; opacity: 1; } }
-        .deleting-line { stroke: #ef4444 !important; stroke-width: 14px !important; opacity: 0.7; transition: all 0.2s; }
+        .active-node { animation: pulse 1.5s infinite; fill: #00a0e9 !important; stroke: white !important; }
+        @keyframes pulse { 0% { r: 14; opacity: 1; } 50% { r: 18; opacity: 0.7; } 100% { r: 14; opacity: 1; } }
         .header-bg { background-color: #ffffff; border-bottom: 3px solid #00a0e9; }
-        .modal-animate { animation: fadeIn 0.2s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        .item-palette { background: #f8fafc; border-bottom: 1px solid #cbd5e1; box-shadow: inset 0 -2px 4px rgba(0,0,0,0.05); }
+        .deleting-inner { animation: shake 0.5s infinite; opacity: 0.7; }
+        .deleting-stroke { stroke: #ef4444 !important; }
+        .deleting-fill { fill: #fecaca !important; }
+        @keyframes shake { 0%, 100% { transform: translate(0, 0); } 25% { transform: translate(-2px, 2px); } 75% { transform: translate(2px, -2px); } }
+        .modal-overlay { background-color: rgba(15, 23, 42, 0.95); animation: fadeIn 0.2s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     </style>
 </head>
 <body>
@@ -31,33 +35,22 @@
         const LOGO_PATH = "./加藤電気工事_20250510_155544_0000~3.png";
         const TANSEN_PATH = "./Screenshot_20260212-173222~2.png";
 
-        const COMPONENTS = [
-            { id: 'pwr', label: '電源', x: 70, y: 160, type: 'breaker' },
-            { id: 'lmp', label: 'ランプ', x: 300, y: 60, type: 'lamp' },
-            { id: 'swi', label: 'スイッチ', x: 300, y: 390, type: 'switch' },
-            { id: 'out', label: 'コンセント', x: 70, y: 390, type: 'outlet' },
-            { id: 'omt', label: '施工省略', x: 530, y: 160, type: 'omitted' },
-        ];
-
-        const TERMINAL_DEFS = [
-            { id: 'p_n', parentId: 'pwr', ox: 45, oy: -20, role: 'N' },
-            { id: 'p_l', parentId: 'pwr', ox: 45, oy: 20, role: 'L' },
-            { id: 'r_n', parentId: 'lmp', ox: -25, oy: 0, role: 'W' },
-            { id: 'r_s', parentId: 'lmp', ox: 25, oy: 0, role: 'S' },
-            { id: 's_l', parentId: 'swi', ox: -25, oy: 0, role: 'L' },
-            { id: 's_s', parentId: 'swi', ox: 25, oy: 0, role: 'S' },
-            { id: 'c_n', parentId: 'out', ox: 25, oy: -15, role: 'W' },
-            { id: 'c_l', parentId: 'out', ox: 25, oy: 15, role: 'L' },
-            { id: 'o_n', parentId: 'omt', ox: -35, oy: -20, role: 'W' },
-            { id: 'o_s', parentId: 'omt', ox: -35, oy: 20, role: 'S' },
-        ];
+        const ITEM_TYPES = {
+            breaker: { label: '電源', w:60, h:50, terminals: [{id:'n', ox:45, oy:-20, r:'N'}, {id:'l', ox:45, oy:20, r:'L'}] },
+            lamp:    { label: 'ランプ', w:60, h:60, terminals: [{id:'n', ox:-25, oy:0, r:'W'}, {id:'s', ox:25, oy:0, r:'S'}] },
+            switch:  { label: 'スイッチ', w:60, h:60, terminals: [{id:'l', ox:-25, oy:0, r:'L'}, {id:'s', ox:25, oy:0, r:'S'}] },
+            outlet:  { label: 'コンセント', w:60, h:60, terminals: [{id:'n', ox:25, oy:-15, r:'W'}, {id:'l', ox:25, oy:15, r:'L'}] },
+            omitted: { label: '施工省略', w:60, h:60, terminals: [{id:'n', ox:-35, oy:-20, r:'W'}, {id:'s', ox:-35, oy:20, r:'S'}] },
+            box:     { label: 'ボックス', w:200, h:150, terminals: [], isBox: true }
+        };
 
         const LucideIcon = ({ name }) => {
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [name]);
-            return <i data-lucide={name} style={{ width: 22, height: 22 }}></i>;
+            return <i data-lucide={name} style={{ width: 20, height: 20 }}></i>;
         };
 
         const App = () => {
+            const [items, setItems] = useState([]);
             const [joints, setJoints] = useState([]);
             const [segments, setSegments] = useState([]);
             const [selectedT, setSelectedT] = useState(null);
@@ -65,13 +58,13 @@
             const [thick, setThick] = useState(1.6);
             const [showSld, setShowSld] = useState(false);
             const [showHelp, setShowHelp] = useState(false);
-            const [editingJId, setEditingJId] = useState(null);
             const [judgment, setJudgment] = useState(null);
-            const [movingJointId, setMovingJointId] = useState(null);
-            const [pressingSegId, setPressingSegId] = useState(null);
-            
-            const deleteTimerRef = useRef(null);
+            const [editingJId, setEditingJId] = useState(null);
+            const [dragState, setDragState] = useState(null);
+            const [deleteCandidate, setDeleteCandidate] = useState(null);
+
             const svgRef = useRef(null);
+            const timerRef = useRef(null);
 
             useEffect(() => {
                 const resize = () => document.documentElement.style.setProperty('--app-height', `${window.innerHeight}px`);
@@ -79,166 +72,287 @@
                 return () => window.removeEventListener('resize', resize);
             }, []);
 
-            const terminals = useMemo(() => TERMINAL_DEFS.map(t => {
-                const parent = COMPONENTS.find(c => c.id === t.parentId);
-                return { ...t, x: parent.x + t.ox, y: parent.y + t.oy };
-            }), []);
+            const allTerminals = useMemo(() => {
+                return items.flatMap(item => {
+                    const def = ITEM_TYPES[item.type];
+                    if (!def.terminals) return [];
+                    return def.terminals.map(t => ({
+                        uniqueId: `${item.id}-${t.id}`,
+                        itemId: item.id,
+                        termId: t.id,
+                        x: item.x + t.ox,
+                        y: item.y + t.oy,
+                        role: t.r
+                    }));
+                });
+            }, [items]);
 
             const getPos = (e) => {
                 const rect = svgRef.current.getBoundingClientRect();
-                const cx = e.touches ? e.touches[0].clientX : e.clientX;
-                const cy = e.touches ? e.touches[0].clientY : e.clientY;
-                return { x: (cx - rect.left) * (600 / rect.width), y: (cy - rect.top) * (450 / rect.height) };
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                return { x: (clientX - rect.left) * (600 / rect.width), y: (clientY - rect.top) * (450 / rect.height) };
             };
 
-            const runJudge = () => {
-                const errors = [];
-                const nLine = segments.find(s => s.tId === 'p_n');
-                if (!nLine) errors.push("電源N(接地側)が未結線です。");
-                else if (nLine.color !== 'white') errors.push("電源Nは白線(W)で繋いでください。");
-                
-                joints.forEach(j => {
-                    const jSegs = segments.filter(s => s.jId === j.id);
-                    if (jSegs.length < 2) return;
-                    let score = 0; jSegs.forEach(s => score += (s.thick === 2.0 ? 2 : 1));
-                    let correct = score <= 2 ? "○" : score <= 4 ? "小" : "中";
-                    if (j.stamp !== correct) errors.push("接続点の刻印が不適切です。");
-                });
+            const handleDown = (e, type, targetId, extra = {}) => {
+                e.stopPropagation();
+                const p = getPos(e);
+                if (type === 'terminal') { setSelectedT(extra); return; }
+                timerRef.current = setTimeout(() => {
+                    if (type === 'segment') { if(confirm("配線を削除しますか？")) setSegments(prev => prev.filter(s => s.id !== targetId)); }
+                    else if (type === 'item' || type === 'box') { if(confirm("器具を削除しますか？")) { setItems(prev => prev.filter(i => i.id !== targetId)); setSegments(prev => prev.filter(s => s.tId.itemId !== targetId)); } }
+                    setDragState(null); setDeleteCandidate(null);
+                }, 800);
+                if (type === 'resize') setDragState({ type, id: targetId, startW: extra.w, startH: extra.h, startX: p.x, startY: p.y });
+                else setDragState({ type, id: targetId, ox: extra.x - p.x, oy: extra.y - p.y, startX: p.x, startY: p.y });
+                setDeleteCandidate(targetId);
+            };
 
-                if (errors.length === 0 && segments.length > 0) setJudgment({ ok: true, msg: "合格！", advice: "加藤電気工事（有）認定の施工です。" });
-                else setJudgment({ ok: false, msg: "要修正", advice: errors[0] || "未完成です。" });
+            const handleMove = (e) => {
+                if (!dragState) return;
+                const p = getPos(e);
+                if (Math.hypot(p.x - dragState.startX, p.y - dragState.startY) > 5) { clearTimeout(timerRef.current); setDeleteCandidate(null); }
+                if (dragState.type === 'item' || dragState.type === 'box') setItems(prev => prev.map(i => i.id === dragState.id ? { ...i, x: p.x + dragState.ox, y: p.y + dragState.oy } : i));
+                else if (dragState.type === 'joint') setJoints(prev => prev.map(j => j.id === dragState.id ? { ...j, x: p.x, y: p.y } : j));
+                else if (dragState.type === 'resize') setItems(prev => prev.map(i => i.id === dragState.id ? { ...i, w: Math.max(50, dragState.startW + (p.x - dragState.startX)), h: Math.max(50, dragState.startH + (p.y - dragState.startY)) } : i));
+            };
+
+            const handleUp = () => { clearTimeout(timerRef.current); setDragState(null); setDeleteCandidate(null); };
+
+            const handleCanvasTap = (e) => {
+                if (!selectedT) return;
+                const p = getPos(e);
+                if (p.y < 50 || p.y > 400) { setSelectedT(null); return; }
+                const jId = `j-${Date.now()}`;
+                setJoints(prev => [...prev, { id: jId, x: p.x, y: p.y, stamp: "" }]);
+                setSegments(prev => [...prev, { id: `s-${Date.now()}`, tId: selectedT, jId, color, thick }]);
+                setSelectedT(null);
+            };
+
+            const connectToJoint = (jId) => {
+                if (selectedT) { setSegments(prev => [...prev, { id: `s-${Date.now()}`, tId: selectedT, jId, color, thick }]); setSelectedT(null); }
+            };
+
+            // --- 判定ロジック (V35仕様：配置→配線→刻印) ---
+            const runJudge = () => {
+                
+                // 1. 【器具の配置チェック】
+                const missing = [];
+                if (!items.some(i => i.type === 'breaker')) missing.push("電源");
+                if (!items.some(i => i.type === 'lamp')) missing.push("ランプ");
+                if (!items.some(i => i.type === 'switch')) missing.push("スイッチ");
+                if (!items.some(i => i.type === 'outlet')) missing.push("コンセント");
+                if (!items.some(i => i.type === 'omitted')) missing.push("施工省略");
+                
+                if (missing.length > 0) {
+                    setJudgment({ ok: false, msg: "器具不足", advice: `${missing.join("、")}が配置されていません。` });
+                    return;
+                }
+
+                // 2. 【配線の正しさチェック】
+                
+                // 2-1. 未結線チェック
+                let unconnectedErrors = [];
+                items.forEach(item => {
+                    if (item.type === 'box') return;
+                    const def = ITEM_TYPES[item.type];
+                    def.terminals.forEach(t => {
+                        const isConnected = segments.some(s => s.tId.itemId === item.id && s.tId.termId === t.id);
+                        if (!isConnected) unconnectedErrors.push(`${ITEM_TYPES[item.type].label}の(${t.r})端子が未結線です。`);
+                    });
+                });
+                if (unconnectedErrors.length > 0) {
+                    setJudgment({ ok: false, msg: "未結線", advice: unconnectedErrors[0] });
+                    return;
+                }
+
+                // 電源特定
+                const pwr = items.find(i => i.type === 'breaker');
+                const pwrN = { itemId: pwr.id, termId: 'n' };
+                const pwrL = { itemId: pwr.id, termId: 'l' };
+
+                // 2-2. 電源線の太さチェック
+                const pwrSegs = segments.filter(s => s.tId.itemId === pwr.id);
+                for (const s of pwrSegs) {
+                    if (s.thick !== 2.0) {
+                        setJudgment({ ok: false, msg: "電線選定ミス", advice: "電源からのケーブルは「2.0mm」を使用してください。" });
+                        return;
+                    }
+                }
+
+                // 接続グループの探索ヘルパー
+                const getConnectedGroup = (startTerm) => {
+                    const group = new Set();
+                    const queue = [startTerm];
+                    const visitedJ = new Set();
+                    while(queue.length > 0) {
+                        const curr = queue.shift();
+                        const key = `${curr.itemId}-${curr.termId}`;
+                        if(group.has(key)) continue;
+                        group.add(key);
+                        const connectedSegs = segments.filter(s => s.tId.itemId === curr.itemId && s.tId.termId === curr.termId);
+                        connectedSegs.forEach(seg => {
+                            if(visitedJ.has(seg.jId)) return;
+                            visitedJ.add(seg.jId);
+                            const jointSegs = segments.filter(s => s.jId === seg.jId);
+                            jointSegs.forEach(js => queue.push(js.tId));
+                        });
+                    }
+                    return group;
+                };
+
+                const groupN = getConnectedGroup(pwrN); // 電源Nに繋がっているグループ
+                const groupL = getConnectedGroup(pwrL); // 電源Lに繋がっているグループ
+
+                // 2-3. 極性チェック (N側)
+                for (const item of items) {
+                    if (['lamp', 'outlet', 'omitted'].includes(item.type)) {
+                        const targetT = ITEM_TYPES[item.type].terminals.find(t => t.r === 'W');
+                        if (targetT && !groupN.has(`${item.id}-${targetT.id}`)) {
+                            setJudgment({ ok: false, msg: "誤配線 (接地側)", advice: `${ITEM_TYPES[item.type].label}の接地側(W)が電源のNに繋がっていません。` });
+                            return;
+                        }
+                    }
+                }
+
+                // 2-4. 極性チェック (L側 - スイッチ・コンセント)
+                for (const item of items) {
+                    if (['switch', 'outlet'].includes(item.type)) {
+                        const targetT = ITEM_TYPES[item.type].terminals.find(t => t.r === 'L'); // スイッチのL、コンセントのL
+                        if (targetT && !groupL.has(`${item.id}-${targetT.id}`)) {
+                            setJudgment({ ok: false, msg: "誤配線 (非接地側)", advice: `${ITEM_TYPES[item.type].label}の非接地側(L)が電源のLに繋がっていません。` });
+                            return;
+                        }
+                    }
+                }
+
+                // 2-5. スイッチ回路チェック (ランプの黒線が電源Lに直接繋がっていないか)
+                for (const item of items) {
+                    if (item.type === 'lamp') {
+                        const targetT = ITEM_TYPES[item.type].terminals.find(t => t.r === 'S'); // ランプの黒線側
+                        if (groupL.has(`${item.id}-${targetT.id}`)) {
+                            setJudgment({ ok: false, msg: "誤配線 (スイッチ)", advice: "ランプがスイッチを経由せずに電源Lに繋がっています（常時点灯）。" });
+                            return;
+                        }
+                    }
+                }
+
+                // 3. 【刻印チェック】
+                for (const j of joints) {
+                    const connected = segments.filter(s => s.jId === j.id);
+                    if (connected.length < 2) continue; // 接続点として成立していないものは無視
+
+                    let score = 0;
+                    connected.forEach(s => score += (s.thick === 2.0 ? 2 : 1));
+                    let correct = "";
+                    if (score <= 2) correct = "○";
+                    else if (score <= 4) correct = "小";
+                    else correct = "中";
+
+                    if (j.stamp !== correct) {
+                        setJudgment({ ok: false, msg: "刻印ミス", advice: `接続点(x:${Math.round(j.x)})の刻印が違います。（正解: ${correct}）` });
+                        return;
+                    }
+                }
+
+                // 全てクリア
+                setJudgment({ ok: true, msg: "合格！", advice: "加藤電気工事（有）認定の施工です。おめでとうございます！" });
             };
 
             return (
-                <div className="flex flex-col h-full overflow-hidden" 
-                     onPointerMove={(e) => { 
-                         if (movingJointId) { const p = getPos(e); setJoints(prev => prev.map(j => j.id === movingJointId ? {...j, x: p.x, y: p.y} : j)); } 
-                     }}
-                     onPointerUp={() => { clearTimeout(deleteTimerRef.current); setPressingSegId(null); setMovingJointId(null); }}>
-                    
-                    <header className="h-16 header-bg flex justify-between items-center px-4 shrink-0 z-50 shadow-md">
+                <div className="flex flex-col h-full overflow-hidden" onPointerMove={handleMove} onPointerUp={handleUp} onPointerLeave={handleUp}>
+                    <header className="h-14 header-bg flex justify-between items-center px-4 shrink-0 z-50 shadow-sm">
                         <div className="flex items-center gap-2">
-                            <img src={LOGO_PATH} className="h-10 object-contain" />
-                            <h1 className="text-[#00a0e9] text-lg font-black tracking-tighter leading-tight">加藤電気工事（有）</h1>
+                            <img src={LOGO_PATH} className="h-8 object-contain" />
+                            <h1 className="text-[#00a0e9] text-sm font-black tracking-tight">加藤電気工事（有）</h1>
                         </div>
                         <div className="flex gap-2">
-                            <button onClick={() => setShowSld(true)} className="p-2 bg-slate-100 rounded-xl"><LucideIcon name="file-text" /></button>
-                            <button onClick={() => setShowHelp(true)} className="p-2 bg-slate-100 rounded-xl"><LucideIcon name="help-circle" /></button>
-                            <button onClick={runJudge} className="bg-[#00a0e9] text-white px-4 py-2 rounded-xl text-xs font-black shadow-lg active:scale-95 transition-transform">判定</button>
+                            <button onClick={() => setShowSld(true)} className="p-2 bg-slate-100 rounded-lg active:bg-slate-200"><LucideIcon name="file-text" /></button>
+                            <button onClick={() => setShowHelp(true)} className="p-2 bg-slate-100 rounded-lg active:bg-slate-200"><LucideIcon name="help-circle" /></button>
+                            <button onClick={runJudge} className="bg-[#00a0e9] text-white px-3 py-1.5 rounded-lg text-xs font-black shadow-md active:translate-y-0.5 transition-transform">判定</button>
                         </div>
                     </header>
 
+                    <div className="h-20 item-palette flex items-center px-4 gap-4 shrink-0 overflow-x-auto">
+                        <span className="text-[10px] font-bold text-slate-400 shrink-0 vertical-rl">器具追加 ▶</span>
+                        {Object.entries(ITEM_TYPES).map(([type, def]) => (
+                            <button key={type} onClick={() => setItems([...items, {id:`item-${Date.now()}`, type, x:300, y:225, w:def.w, h:def.h}])} 
+                                    className="flex flex-col items-center gap-1 shrink-0 group">
+                                <div className="w-10 h-10 bg-white border border-slate-300 rounded-lg flex items-center justify-center shadow-sm group-active:scale-95 transition-transform">
+                                    {type === 'breaker' && <span className="font-bold text-xs border border-black px-1">B</span>}
+                                    {type === 'lamp' && <span className="text-xl">⊗</span>}
+                                    {type === 'switch' && <span className="text-xl">●</span>}
+                                    {type === 'outlet' && <div className="flex flex-col items-center leading-none"><span className="text-[8px]">l l</span><span className="text-[14px]">○</span></div>}
+                                    {type === 'omitted' && <div className="w-6 h-6 border border-dashed border-slate-400"></div>}
+                                    {type === 'box' && <div className="w-6 h-4 border-2 border-slate-800"></div>}
+                                </div>
+                                <span className="text-[9px] font-bold text-slate-500">{def.label}</span>
+                            </button>
+                        ))}
+                    </div>
+
                     <main className="flex-1 relative bg-white overflow-hidden">
-                        <svg ref={svgRef} viewBox="0 0 600 450" className="w-full h-full canvas-bg touch-none"
-                             onPointerDown={(e) => {
-                                if (!selectedT) return;
-                                const p = getPos(e);
-                                if (p.x < 150 || p.x > 450) return;
-                                const jId = `j-${Date.now()}`;
-                                setJoints([...joints, { id: jId, x: p.x, y: p.y, stamp: "" }]);
-                                setSegments([...segments, { id: `s-${Date.now()}`, tId: selectedT, jId, color, thick }]);
-                                setSelectedT(null);
-                             }}>
-                            
-                            <rect x="175" y="100" width="250" height="230" rx="20" fill="#f8fafc" stroke="#e2e8f0" strokeDasharray="6" />
-
-                            {COMPONENTS.map(c => (
-                                <g key={c.id} transform={`translate(${c.x}, ${c.y})`}>
-                                    {c.type === 'breaker' && <g><rect x="-30" y="-25" width="60" height="50" fill="white" stroke="black" strokeWidth="2"/><text textAnchor="middle" y="8" className="font-bold">B</text></g>}
-                                    {c.type === 'lamp' && <g><circle r="25" fill="white" stroke="black" strokeWidth="2"/><line x1="-18" y1="-18" x2="18" y2="18" stroke="black" strokeWidth="2"/><line x1="18" y1="-18" x2="-18" y2="18" stroke="black" strokeWidth="2"/></g>}
-                                    {c.type === 'switch' && <g><circle r="22" fill="white" stroke="black" strokeWidth="2"/><text textAnchor="middle" y="6" className="font-bold">イ</text></g>}
-                                    {c.type === 'outlet' && <g><circle r="25" fill="white" stroke="black" strokeWidth="2"/><line x1="-12" y1="-5" x2="12" y2="-5" stroke="black" strokeWidth="2"/><line x1="-12" y1="5" x2="12" y2="5" stroke="black" strokeWidth="2"/></g>}
-                                    {c.type === 'omitted' && <rect x="-30" y="-30" width="60" height="60" fill="none" stroke="#94a3b8" strokeDasharray="4"/>}
-                                    <text y="45" textAnchor="middle" className="text-[10px] fill-slate-400 font-bold">{c.label}</text>
+                        <svg ref={svgRef} viewBox="0 0 600 450" className="w-full h-full canvas-bg touch-none" onPointerDown={handleCanvasTap}>
+                            {items.map(item => (
+                                <g key={item.id} transform={`translate(${item.x}, ${item.y})`}>
+                                    <g className={deleteCandidate === item.id ? 'deleting-inner' : ''}>
+                                        {item.type === 'box' ? (
+                                            <g>
+                                                <rect x={-item.w/2} y={-item.h/2} width={item.w} height={item.h} fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="6"
+                                                      className={deleteCandidate === item.id ? 'deleting-stroke deleting-fill' : ''}
+                                                      onPointerDown={(e) => handleDown(e, 'box', item.id, {x:item.x, y:item.y})} />
+                                                <rect x={item.w/2-15} y={item.h/2-15} width="30" height="30" fill="transparent"
+                                                      onPointerDown={(e) => handleDown(e, 'resize', item.id, {w:item.w, h:item.h})} />
+                                                <rect x={item.w/2-8} y={item.h/2-8} width="16" height="16" fill="#00a0e9" className="pointer-events-none" />
+                                            </g>
+                                        ) : (
+                                            <g onPointerDown={(e) => handleDown(e, 'item', item.id, {x:item.x, y:item.y})} className={deleteCandidate === item.id ? 'deleting-stroke' : ''}>
+                                                <rect x="-30" y="-30" width="60" height="60" fill="transparent" />
+                                                {item.type === 'breaker' && <g><rect x="-25" y="-25" width="50" height="50" fill="white" stroke="black" strokeWidth="2" className={deleteCandidate === item.id ? 'deleting-stroke deleting-fill' : ''}/><text textAnchor="middle" y="5" className="font-bold">B</text></g>}
+                                                {item.type === 'lamp' && <g><circle r="25" fill="white" stroke="black" strokeWidth="2" className={deleteCandidate === item.id ? 'deleting-stroke deleting-fill' : ''}/><path d="M-18 -18 L18 18 M18 -18 L-18 18" stroke="black" strokeWidth="2" className={deleteCandidate === item.id ? 'deleting-stroke' : ''}/></g>}
+                                                {item.type === 'switch' && <g><circle r="22" fill="white" stroke="black" strokeWidth="2" className={deleteCandidate === item.id ? 'deleting-stroke deleting-fill' : ''}/><circle r="12" fill="black" className={deleteCandidate === item.id ? 'deleting-fill' : ''}/></g>}
+                                                {item.type === 'outlet' && <g><circle r="25" fill="white" stroke="black" strokeWidth="2" className={deleteCandidate === item.id ? 'deleting-stroke deleting-fill' : ''}/><path d="M-10 -8 L10 -8 M-10 8 L10 8" stroke="black" strokeWidth="2" className={deleteCandidate === item.id ? 'deleting-stroke' : ''}/></g>}
+                                                {item.type === 'omitted' && <rect x="-25" y="-25" width="50" height="50" fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="4" className={deleteCandidate === item.id ? 'deleting-stroke' : ''}/>}
+                                                <text y="42" textAnchor="middle" className="text-[10px] fill-slate-400 font-bold uppercase pointer-events-none">{ITEM_TYPES[item.type].label}</text>
+                                            </g>
+                                        )}
+                                    </g>
                                 </g>
                             ))}
-
                             {segments.map(s => {
-                                const t = terminals.find(term => term.id === s.tId);
+                                const t = allTerminals.find(term => term.itemId === s.tId.itemId && term.termId === s.tId.termId);
                                 const j = joints.find(joint => joint.id === s.jId);
-                                return <path key={s.id} d={`M ${t.x} ${t.y} L ${j.x} ${t.y} L ${j.x} ${j.y}`} fill="none" 
-                                             stroke={s.color === 'white' ? '#94a3b8' : s.color === 'red' ? '#ef4444' : '#1e293b'} 
-                                             strokeWidth={s.thick === 1.6 ? 6 : 10}
-                                             className={pressingSegId === s.id ? 'deleting-line' : ''}
-                                             onPointerDown={(e) => { e.stopPropagation(); setPressingSegId(s.id); deleteTimerRef.current = setTimeout(() => { setSegments(segments.filter(seg => seg.id !== s.id)); setPressingSegId(null); }, 1000); }} 
-                                             onPointerUp={() => { clearTimeout(deleteTimerRef.current); setPressingSegId(null); }} />;
+                                if (!t || !j) return null;
+                                return <path key={s.id} d={`M ${t.x} ${t.y} L ${j.x} ${t.y} L ${j.x} ${j.y}`} fill="none" stroke={s.color === 'white' ? '#cbd5e1' : s.color === 'red' ? '#ef4444' : '#1e293b'} strokeWidth={s.thick === 1.6 ? 6 : 10} className={deleteCandidate === s.id ? 'deleting-inner deleting-stroke' : ''} onPointerDown={(e) => handleDown(e, 'segment', s.id)} />;
                             })}
-
                             {joints.map(j => (
-                                <g key={j.id} onPointerDown={(e) => { e.stopPropagation(); if(selectedT) { setSegments([...segments, { id: `s-${Date.now()}`, tId: selectedT, jId: j.id, color, thick }]); setSelectedT(null); } else { setMovingJointId(j.id); } }} onDoubleClick={() => setEditingJId(j.id)}>
-                                    <circle cx={j.x} cy={j.y} r="25" fill="transparent" />
-                                    <circle cx={j.x} cy={j.y} r="10" fill="#1e293b" stroke="white" strokeWidth="2" />
-                                    {j.stamp && <g transform={`translate(${j.x+15}, ${j.y-15})`}><rect x="-10" y="-10" width="20" height="20" fill="#00a0e9" rx="4" /><text textAnchor="middle" y="5" className="fill-white font-black text-xs">{j.stamp}</text></g>}
+                                <g key={j.id} transform={`translate(${j.x}, ${j.y})`} onPointerDown={(e) => { e.stopPropagation(); if(selectedT) connectToJoint(j.id); else handleDown(e, 'joint', j.id, {x:j.x, y:j.y}); }} onDoubleClick={(e) => { e.stopPropagation(); setEditingJId(j.id); }}>
+                                    <circle r="20" fill="transparent" />
+                                    <circle r="10" fill="#1e293b" stroke="white" strokeWidth="2" />
+                                    {j.stamp && <g transform="translate(15, -15)"><rect x="-10" y="-10" width="20" height="20" fill="#00a0e9" rx="4" /><text textAnchor="middle" y="5" className="fill-white font-black text-xs pointer-events-none">{j.stamp}</text></g>}
                                 </g>
                             ))}
-
-                            {terminals.map(t => (
-                                <g key={t.id} onPointerDown={(e) => { e.stopPropagation(); setSelectedT(t.id); }}>
-                                    <circle cx={t.x} cy={t.y} r={14} fill={selectedT === t.id ? "#00a0e9" : "#1e293b"} className={selectedT === t.id ? "active-node" : ""} stroke="white" strokeWidth="2" />
-                                    <text x={t.x} y={t.y + 4.5} textAnchor="middle" className="fill-white text-[12px] font-black">{t.role}</text>
+                            {allTerminals.map(t => (
+                                <g key={t.uniqueId} transform={`translate(${t.x}, ${t.y})`} onPointerDown={(e) => handleDown(e, 'terminal', null, {itemId: t.itemId, termId: t.termId})}>
+                                    <circle r="14" fill={selectedT?.itemId === t.itemId && selectedT?.termId === t.termId ? "#00a0e9" : "#1e293b"} className={selectedT?.itemId === t.itemId && selectedT?.termId === t.termId ? "active-node" : ""} stroke="white" strokeWidth="2" />
+                                    <text y="4.5" textAnchor="middle" className="fill-white text-[12px] font-black pointer-events-none">{t.role}</text>
                                 </g>
                             ))}
                         </svg>
-
-                        {/* モーダル：単線図写真 */}
-                        {showSld && (
-                            <div className="absolute inset-0 bg-slate-900 z-[100] flex flex-col modal-animate" onClick={() => setShowSld(false)}>
-                                <div className="p-4 flex justify-end"><button className="text-white p-2"><LucideIcon name="x" /></button></div>
-                                <div className="flex-1 flex items-center justify-center p-4">
-                                    <img src={TANSEN_PATH} className="max-w-full max-h-full object-contain rounded shadow-2xl" />
-                                </div>
-                                <div className="p-8 text-white text-center font-bold">画面をタップして戻る</div>
-                            </div>
-                        )}
-
-                        {/* モーダル：ヘルプ */}
-                        {showHelp && (
-                            <div className="absolute inset-0 bg-slate-900/95 z-[100] p-8 text-white flex flex-col modal-animate" onClick={() => setShowHelp(false)}>
-                                <h2 className="text-2xl font-black mb-8 text-[#00a0e9] flex items-center gap-2"><LucideIcon name="help-circle" /> 操作方法</h2>
-                                <div className="space-y-6 text-lg font-bold">
-                                    <div className="bg-slate-800 p-4 rounded-xl">1. 丸い端子をタップして線を引き出す</div>
-                                    <div className="bg-slate-800 p-4 rounded-xl">2. 中央エリアをタップして接続</div>
-                                    <div className="bg-slate-800 p-4 rounded-xl">3. 接続点をダブルタップで刻印選択</div>
-                                    <div className="bg-slate-800 p-4 rounded-xl border-l-4 border-rose-500">4. 線を1秒間長押しで削除</div>
-                                </div>
-                                <button className="mt-auto bg-[#00a0e9] py-4 rounded-2xl font-black">トレーニングに戻る</button>
-                            </div>
-                        )}
-
-                        {editingJId && (
-                            <div className="absolute inset-0 bg-slate-900/40 flex items-center justify-center z-[110]" onClick={() => setEditingJId(null)}>
-                                <div className="bg-white p-6 rounded-3xl flex gap-4" onClick={e => e.stopPropagation()}>
-                                    {["○", "小", "中"].map(s => (
-                                        <button key={s} onClick={() => { setJoints(joints.map(j => j.id === editingJId ? {...j, stamp: s} : j)); setEditingJId(null); }} className="w-16 h-16 bg-slate-100 rounded-2xl font-black text-xl active:bg-[#00a0e9] active:text-white">{s}</button>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
-                        {judgment && (
-                            <div className={`absolute top-20 left-4 right-4 bg-white p-5 rounded-3xl shadow-2xl border-l-8 ${judgment.ok ? 'border-emerald-500' : 'border-rose-500'} z-[80] modal-animate`}>
-                                <div className="flex justify-between items-start">
-                                    <div><h3 className="font-black text-lg">{judgment.msg}</h3><p className="text-xs text-slate-500 font-bold">{judgment.advice}</p></div>
-                                    <button onClick={() => setJudgment(null)}><LucideIcon name="x" /></button>
-                                </div>
-                            </div>
-                        )}
+                        {showSld && <div className="absolute inset-0 modal-overlay z-[100] flex flex-col" onClick={() => setShowSld(false)}><div className="p-4 flex justify-end text-white"><LucideIcon name="x" /></div><div className="flex-1 flex items-center justify-center p-4"><img src={TANSEN_PATH} className="max-w-full max-h-full object-contain rounded shadow-2xl" /></div></div>}
+                        {showHelp && <div className="absolute inset-0 modal-overlay z-[100] p-8 text-white flex flex-col justify-center" onClick={() => setShowHelp(false)}><h2 className="text-2xl font-black mb-6 text-[#00a0e9] flex items-center gap-2"><LucideIcon name="help-circle" /> 操作方法</h2><div className="space-y-4 font-bold text-lg"><p>1. 器具追加・ドラッグで配置</p><p>2. 端子タップで結線</p><p>3. 接続点ダブルタップで刻印</p><p class="text-rose-400">※ 線・器具を長押しで削除</p></div><button className="mt-8 bg-[#00a0e9] py-3 rounded-xl font-black shadow-lg">閉じる</button></div>}
+                        {editingJId && <div className="absolute inset-0 bg-slate-900/50 flex items-center justify-center z-[110]" onClick={() => setEditingJId(null)}><div className="bg-white p-6 rounded-3xl flex gap-4 shadow-2xl" onClick={e => e.stopPropagation()}>{["○", "小", "中"].map(s => <button key={s} onClick={() => { setJoints(prev => prev.map(j => j.id === editingJId ? {...j, stamp: s} : j)); setEditingJId(null); }} className="w-16 h-16 bg-slate-100 rounded-2xl font-black text-2xl hover:bg-[#00a0e9] hover:text-white transition-colors">{s}</button>)}</div></div>}
+                        {judgment && <div className={`absolute top-20 left-4 right-4 bg-white p-6 rounded-2xl shadow-2xl border-l-8 ${judgment.ok ? 'border-emerald-500' : 'border-rose-500'} z-[90]`} onClick={() => setJudgment(null)}><div className="flex justify-between items-start"><div><h3 className="font-black text-xl mb-1">{judgment.msg}</h3><p className="text-sm text-slate-600 font-bold">{judgment.advice}</p></div><LucideIcon name="x" className="text-slate-400" /></div></div>}
                     </main>
 
-                    <footer className="h-24 bg-slate-100 flex items-center px-4 gap-4 shrink-0 z-50 border-t border-slate-200">
-                        <div className="flex gap-2 shrink-0">
-                            {['black', 'white', 'red'].map(k => (
-                                <button key={k} onClick={() => setColor(k)} className={`p-3 rounded-xl border-2 ${color === k ? 'border-[#00a0e9] bg-white' : 'border-transparent'}`}>
-                                    <div className="w-6 h-6 rounded-full border" style={{backgroundColor: k === 'white' ? '#fff' : k === 'red' ? '#ef4444' : '#1e293b'}} />
-                                </button>
-                            ))}
+                    <footer className="h-20 bg-slate-100 flex items-center px-4 gap-4 shrink-0 z-50 border-t border-slate-200">
+                        <div className="flex gap-2">
+                            {['black', 'white', 'red'].map(k => <button key={k} onClick={() => setColor(k)} className={`p-2 rounded-xl border-2 transition-all ${color === k ? 'border-[#00a0e9] bg-white scale-110 shadow-sm' : 'border-transparent'}`}><div className="w-5 h-5 rounded-full border border-slate-200 shadow-inner" style={{backgroundColor: k === 'white' ? '#fff' : k === 'red' ? '#ef4444' : '#1e293b'}} /></button>)}
                         </div>
-                        <div className="flex bg-white p-1 rounded-xl shadow-inner shrink-0">
-                            {[1.6, 2.0].map(v => (
-                                <button key={v} onClick={() => setThick(v)} className={`px-4 py-3 rounded-lg text-[11px] font-black ${thick === v ? 'bg-[#00a0e9] text-white' : 'text-slate-400'}`}>{v}mm</button>
-                            ))}
+                        <div className="flex bg-white p-1 rounded-xl shadow-inner">
+                            {[1.6, 2.0].map(v => <button key={v} onClick={() => setThick(v)} className={`px-4 py-2 rounded-lg text-[10px] font-black transition-all ${thick === v ? 'bg-[#00a0e9] text-white shadow-md' : 'text-slate-400'}`}>{v}</button>)}
                         </div>
-                        <button onClick={() => { if(confirm("消去しますか？")) { setSegments([]); setJoints([]); setJudgment(null); } }} className="ml-auto p-4 text-slate-400"><LucideIcon name="trash-2" /></button>
+                        <button onClick={() => { if(confirm("全てリセットしますか？")) { setItems([]); setJoints([]); setSegments([]); setJudgment(null); } }} className="ml-auto p-4 text-slate-400 active:text-rose-500 transition-colors"><LucideIcon name="trash-2" /></button>
                     </footer>
                 </div>
             );
